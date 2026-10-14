@@ -1,0 +1,8 @@
+# Compilação do app (uma pasta por kit do Qt Creator)
+build/
+build-*/
+CMakeLists.txt.user*
+CMakeUserPresets.json
+
+# Python
+__pycache__/

@@ -1,0 +1,5 @@
+# Texto com fim de linha normalizado no repositório; binários intactos.
+* text=auto
+*.ttf binary
+*.ico binary
+*.png binary
