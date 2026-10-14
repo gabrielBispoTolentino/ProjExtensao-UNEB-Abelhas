@@ -1,0 +1,2 @@
+// Ícone do executável do Windows (a abelha). appicon.ico é gerado a partir de bee.svg.
+IDI_ICON1 ICON "appicon.ico"
