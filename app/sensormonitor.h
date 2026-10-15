@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cloudsync.h"
+#include "outsideweather.h"
 #include "sensorreadingstore.h"
 
 #ifdef HAVE_QT_BLUETOOTH
@@ -9,6 +10,7 @@
 
 #include <QObject>
 #include <QMap>
+#include <QUrl>
 #include <QVariantList>
 
 // Junta as leituras do Supabase (via CloudSync) e das placas por perto (via
@@ -38,6 +40,7 @@ public:
 #ifdef HAVE_QT_BLUETOOTH
     BleSensorClient *bleClient() { return &m_bleClient; }
 #endif
+    OutsideWeather *outsideWeather() { return &m_weather; }
 
     // Tela da placa: estatísticas e dados do gráfico. rangeHours <= 0 = todas as leituras.
     Q_INVOKABLE QVariantMap deviceStats(const QString &deviceId, int rangeHours);
@@ -50,6 +53,12 @@ public:
     Q_INVOKABLE void cleanData(const QString &deviceId, int olderThanDays, bool local, bool cloud,
                                const QString &adminPassword);
     Q_INVOKABLE void clearCleanupMessage();
+
+    // Exportação: leituras de uma placa ("" = todas) das últimas rangeHours
+    // (0 = todas) num arquivo CSV escolhido pelo usuário (no Android, uma
+    // URL content:// do seletor de arquivos). Devolve {ok, message}.
+    Q_INVOKABLE QVariantMap exportCsv(const QUrl &file, const QString &deviceId, int rangeHours);
+    Q_INVOKABLE int exportCount(const QString &deviceId, int rangeHours);
     bool cloudConfigured() const;
     bool cleaning() const { return m_cleaning; }
     QString cleanupMessage() const { return m_cleanupMessage; }
@@ -95,6 +104,7 @@ private:
     QMap<QString, TemperatureRange> m_ranges;
     SensorReadingStore m_store;
     CloudSync m_cloud;
+    OutsideWeather m_weather;
 #ifdef HAVE_QT_BLUETOOTH
     BleSensorClient m_bleClient;
 #endif

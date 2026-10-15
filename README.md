@@ -26,7 +26,13 @@ Projeto de extensão da UNEB.
   máxima com horário, amplitude, desvio padrão, variação e correlação entre
   temperatura e umidade.
 - Gráfico de temperatura e umidade no tempo, com mira para ver os valores de
-  cada momento.
+  cada momento. Opcionalmente, junta os períodos em que a placa ficou
+  desligada, para as horas medidas ocuparem o gráfico todo.
+- Temperatura externa da cidade do apiário (Open-Meteo, gratuito), tracejada
+  no gráfico e nas estatísticas: média lá fora e quanto a colmeia fica acima
+  dela. A cidade é escolhida em **Local do apiário**, no menu.
+- Exportar as leituras (por colmeia e por período) para uma planilha CSV,
+  que abre direto no Excel, LibreOffice ou Google Planilhas.
 - Funciona sem internet: guarda as leituras no aparelho e envia para a nuvem
   quando a conexão volta.
 - Ferramentas da placa por Bluetooth: configurar o Wi-Fi (com lista das redes
@@ -137,8 +143,9 @@ O banco local do app fica em
 - **Firmware:** um único arquivo, dividido em seções (configuração, Wi-Fi,
   cartão SD, Supabase, Bluetooth, `setup()` e `loop()`).
 - **App:** a parte em C++ cuida dos dados (`sensormonitor`, `cloudsync`,
-  `sensorreadingstore`, `blesensorclient`, `boardcontrol`); as telas ficam
-  nos arquivos `.qml`, com cores e tamanhos centralizados em `Theme.qml`.
+  `sensorreadingstore`, `outsideweather`, `blesensorclient`,
+  `boardcontrol`); as telas ficam nos arquivos `.qml`, com cores e tamanhos
+  centralizados em `Theme.qml`.
 - **Comentários** em português: cada arquivo começa explicando o que faz,
   arquivos longos são divididos em seções (`// ── Nome ──`) e os comentários
   explicam o porquê, não o óbvio. Nomes de funções e variáveis ficam em inglês.

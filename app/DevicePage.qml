@@ -11,8 +11,14 @@ Item {
 
     property int rangeHours: 24        // 0 = todas as leituras
     property string chartMode: "both"  // "both" | "temp" | "hum"
+    property bool collapseGaps: false  // juntar os períodos sem leituras no gráfico
+    property bool showOutside: true    // temperatura externa no gráfico
     property var stats: ({})
     property var series: ({ points: [], bucketMs: 60000 })
+    property var outside: []           // temperatura externa no período do gráfico
+
+    // Pede ao Main para abrir outra tela (ex.: "weather", o local do apiário).
+    signal openPageRequested(string page)
 
     readonly property var ranges: [
         { hours: 24,  label: "24 h" },
@@ -29,6 +35,13 @@ Item {
     function refresh() {
         stats = sensorMonitor.deviceStats(deviceId, rangeHours)
         series = sensorMonitor.deviceSeries(deviceId, rangeHours, 300)
+        refreshOutside()
+    }
+
+    function refreshOutside() {
+        outside = series.firstMs
+                  ? outsideWeather.series(series.firstMs, series.lastMs, series.bucketMs || 60000)
+                  : []
     }
 
     function fmt(value, decimals, unit) {
@@ -46,6 +59,19 @@ Item {
 
     function when(ms) {
         return ms ? Qt.formatDateTime(new Date(ms), "dd/MM HH:mm") : ""
+    }
+
+    // Duração legível: "2 dias e 4 h", "5 h e 20 min", "40 min".
+    function duration(ms) {
+        const minutes = Math.round(ms / 60000)
+        const days = Math.floor(minutes / 1440)
+        const hours = Math.floor(minutes % 1440 / 60)
+        const mins = minutes % 60
+        if (days > 0)
+            return days + (days === 1 ? " dia" : " dias") + (hours > 0 ? " e " + hours + " h" : "")
+        if (hours > 0)
+            return hours + " h" + (mins > 0 ? " e " + mins + " min" : "")
+        return mins + " min"
     }
 
     function correlationText(r) {
@@ -78,6 +104,14 @@ Item {
                 refreshTimer.start()
         }
     }
+    // Horas externas novas (ou outro local): estatísticas também mudam.
+    Connections {
+        target: outsideWeather
+        function onDataChanged() {
+            if (!refreshTimer.running)
+                refreshTimer.start()
+        }
+    }
 
     component StatLabel: Text {
         color: Theme.inkSoft
@@ -104,6 +138,8 @@ Item {
         property color keyColor
         property var values: ({})
         property string unit
+        // Linhas a mais no fim da tabela: [{label, value}].
+        property var extraRows: []
 
         implicitHeight: cardColumn.implicitHeight + 32
 
@@ -178,6 +214,22 @@ Item {
 
                 StatLabel { text: "Variação no período" }
                 StatValue { text: root.signed(card.values.change, 1, card.unit) }
+
+                // Uma célula por item (rótulo, valor, rótulo...): o GridLayout
+                // de 2 colunas os põe lado a lado.
+                Repeater {
+                    model: card.extraRows.reduce((cells, row) => cells.concat(
+                        [{ label: true, text: row.label }, { label: false, text: row.value }]), [])
+                    delegate: Text {
+                        required property var modelData
+                        Layout.fillWidth: !modelData.label
+                        horizontalAlignment: modelData.label ? Text.AlignLeft : Text.AlignRight
+                        text: modelData.text
+                        color: modelData.label ? Theme.inkSoft : Theme.ink
+                        font.pixelSize: Theme.small + 1
+                        elide: modelData.label ? Text.ElideNone : Text.ElideLeft
+                    }
+                }
             }
         }
     }
@@ -233,6 +285,16 @@ Item {
                     current: root.chartMode
                     onPicked: (value) => root.chartMode = value
                 }
+                ChoiceChip {
+                    text: "Ocultar períodos sem dados"
+                    checked: root.collapseGaps
+                    onToggled: root.collapseGaps = checked
+                }
+                ChoiceChip {
+                    text: "Temperatura externa"
+                    checked: root.showOutside
+                    onToggled: root.showOutside = checked
+                }
             }
 
             Text {
@@ -252,16 +314,47 @@ Item {
                 implicitHeight: root.chartMode === "both" ? 380 : 260
 
                 SensorChart {
+                    id: chart
                     anchors.fill: parent
                     anchors.margins: 12
                     points: root.series.points || []
                     bucketMs: root.series.bucketMs || 60000
                     mode: root.chartMode
+                    collapseGaps: root.collapseGaps
+                    outsidePoints: root.outside
+                    showOutside: root.showOutside
                     // Da primeira à última leitura de fato no período, para a
                     // linha ocupar o gráfico (no mínimo 1 min de largura).
                     startMs: root.series.firstMs || 0
                     endMs: Math.max(root.series.lastMs || 0, startMs + 60000)
                 }
+            }
+
+            // Temperatura externa ligada, mas sem cidade escolhida: leva à tela do local.
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: root.showOutside && !outsideWeather.hasLocation && root.chartMode !== "hum"
+                spacing: 8
+
+                HelpText {
+                    text: "Para comparar com a temperatura lá fora, escolha a cidade do apiário."
+                }
+                ActionButton {
+                    text: "Definir local do apiário"
+                    onClicked: root.openPageRequested("weather")
+                }
+            }
+
+            // Com a opção ligada, diz o que foi ocultado (ou que não havia o
+            // que ocultar, para o toque na opção não parecer sem efeito).
+            HelpText {
+                visible: root.collapseGaps && chart.points.length > 0
+                text: chart.gapCount === 0
+                      ? "Nenhum período sem leituras neste intervalo: a placa registrou sem interrupções."
+                      : (chart.gapCount === 1 ? "1 período sem leituras foi ocultado"
+                                              : chart.gapCount + " períodos sem leituras foram ocultados")
+                        + " (" + root.duration(chart.hiddenMs) + " no total). As faixas claras"
+                        + " com zigue-zague marcam onde a placa ficou desligada ou fora de alcance."
             }
 
             GridLayout {
@@ -277,6 +370,12 @@ Item {
                     keyColor: Theme.propolis
                     unit: "°C"
                     values: root.stats.temperature || {}
+                    extraRows: values.outsideAverage === undefined ? [] : [
+                        { label: "Externa (média)", value: root.fmt(values.outsideAverage, 1, "°C") },
+                        { label: "Externa mín. / máx.",
+                          value: root.fmt(values.outsideMin, 1, "") + " / " + root.fmt(values.outsideMax, 1, "°C") },
+                        { label: "Colmeia − externa (média)", value: root.signed(values.outsideDifference, 1, "°C") }
+                    ]
                 }
                 StatsCard {
                     Layout.fillWidth: true

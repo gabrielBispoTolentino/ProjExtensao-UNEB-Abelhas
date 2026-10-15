@@ -4,6 +4,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QIODevice>
 #include <QSqlError>
 #include <QTimeZone>
 
@@ -120,6 +121,15 @@ bool SensorReadingStore::insertCloudReadings(const QList<SensorPayload> &reading
 }
 
 namespace {
+
+// Valor de ":since" nas consultas "recorded_at >= :since". recorded_at é
+// texto ISO em UTC, então comparar textos compara horários, e '' vem antes
+// de qualquer data (= sem limite inferior). Tem que ser '' e não QString():
+// o driver do SQLite grava uma QString nula como NULL, e nada é >= NULL.
+QString sinceFilter(const QDateTime &since)
+{
+    return since.isValid() ? since.toUTC().toString(Qt::ISODateWithMs) : QStringLiteral("");
+}
 
 StoredSensorReading readStoredReading(const QSqlQuery &query)
 {
@@ -370,9 +380,7 @@ bool SensorReadingStore::setSyncValue(const QString &key, const QString &value, 
 bool SensorReadingStore::readingStats(const QString &deviceId, const QDateTime &since,
                                       QVariantMap *stats, QString *errorMessage)
 {
-    // recorded_at é texto ISO em UTC, então comparar textos compara
-    // horários; '' vem antes de qualquer data (= sem limite inferior).
-    const QString sinceText = since.isValid() ? since.toUTC().toString(Qt::ISODateWithMs) : QString();
+    const QString sinceText = sinceFilter(since);
 
     QSqlQuery totals(m_database);
     totals.prepare(QStringLiteral(R"SQL(
@@ -490,6 +498,29 @@ bool SensorReadingStore::readingStats(const QString &deviceId, const QDateTime &
         return false;
     }
 
+    // Temperatura externa na hora de cada leitura: a diferença mostra quanto
+    // a colônia aquece (ou resfria) a colmeia em relação ao tempo lá fora.
+    QSqlQuery outside(m_database);
+    outside.prepare(QStringLiteral(R"SQL(
+        SELECT COUNT(o.temp), AVG(o.temp), MIN(o.temp), MAX(o.temp), AVG(r.temp_dht - o.temp)
+        FROM sensor_readings r
+        JOIN outside_temperature o
+          ON o.hour = (CAST(strftime('%s', r.recorded_at) AS INTEGER) + 1800) / 3600 * 3600
+        WHERE r.device_id = :device_id AND r.recorded_at >= :since
+    )SQL"));
+    outside.bindValue(QStringLiteral(":device_id"), deviceId);
+    outside.bindValue(QStringLiteral(":since"), sinceText);
+    if (!outside.exec() || !outside.next()) {
+        setSqlError(QStringLiteral("Failed to compute statistics"), outside.lastError(), errorMessage);
+        return false;
+    }
+    if (outside.value(0).toLongLong() > 0) {
+        temperature.insert(QStringLiteral("outsideAverage"),    outside.value(1).toDouble());
+        temperature.insert(QStringLiteral("outsideMin"),        outside.value(2).toDouble());
+        temperature.insert(QStringLiteral("outsideMax"),        outside.value(3).toDouble());
+        temperature.insert(QStringLiteral("outsideDifference"), outside.value(4).toDouble());
+    }
+
     result.insert(QStringLiteral("temperature"), temperature);
     result.insert(QStringLiteral("humidity"), humidity);
     *stats = result;
@@ -520,7 +551,7 @@ bool SensorReadingStore::temperatureRange(const QString &deviceId, const QDateTi
 bool SensorReadingStore::readingSeries(const QString &deviceId, const QDateTime &since, int maxPoints,
                                        QVariantMap *series, QString *errorMessage)
 {
-    const QString sinceText = since.isValid() ? since.toUTC().toString(Qt::ISODateWithMs) : QString();
+    const QString sinceText = sinceFilter(since);
 
     // Intervalo realmente coberto pelas leituras (primeira -> última), para
     // que uma placa com 1 h de dados na visão de 24 h ainda tenha pontos
@@ -585,6 +616,216 @@ bool SensorReadingStore::readingSeries(const QString &deviceId, const QDateTime 
     result.insert(QStringLiteral("lastMs"), lastMs);
     result.insert(QStringLiteral("points"), points);
     *series = result;
+    return true;
+}
+
+// ── Temperatura externa ────────────────────────────────────────────────────
+bool SensorReadingStore::saveOutsideTemperatures(const QList<QPair<qint64, double>> &hours,
+                                                 QString *errorMessage)
+{
+    if (!m_database.transaction()) {
+        setSqlError(QStringLiteral("Failed to start transaction"), m_database.lastError(), errorMessage);
+        return false;
+    }
+    QSqlQuery query(m_database);
+    query.prepare(QStringLiteral(
+        "INSERT INTO outside_temperature (hour, temp) VALUES (:hour, :temp) "
+        "ON CONFLICT(hour) DO UPDATE SET temp = excluded.temp"));
+    for (const auto &hour : hours) {
+        query.bindValue(QStringLiteral(":hour"), hour.first);
+        query.bindValue(QStringLiteral(":temp"), hour.second);
+        if (!query.exec()) {
+            setSqlError(QStringLiteral("Failed to save outside temperature"), query.lastError(), errorMessage);
+            m_database.rollback();
+            return false;
+        }
+    }
+    if (!m_database.commit()) {
+        setSqlError(QStringLiteral("Failed to save outside temperature"), m_database.lastError(), errorMessage);
+        m_database.rollback();
+        return false;
+    }
+    return true;
+}
+
+bool SensorReadingStore::clearOutsideTemperatures(QString *errorMessage)
+{
+    QSqlQuery query(m_database);
+    if (!query.exec(QStringLiteral("DELETE FROM outside_temperature"))) {
+        setSqlError(QStringLiteral("Failed to clear outside temperature"), query.lastError(), errorMessage);
+        return false;
+    }
+    return true;
+}
+
+bool SensorReadingStore::outsideTemperatureBounds(qint64 *firstSecs, qint64 *lastSecs, QString *errorMessage)
+{
+    QSqlQuery query(m_database);
+    if (!query.exec(QStringLiteral("SELECT COALESCE(MIN(hour), 0), COALESCE(MAX(hour), 0) FROM outside_temperature"))
+        || !query.next()) {
+        setSqlError(QStringLiteral("Failed to read outside temperature"), query.lastError(), errorMessage);
+        return false;
+    }
+    *firstSecs = query.value(0).toLongLong();
+    *lastSecs = query.value(1).toLongLong();
+    return true;
+}
+
+bool SensorReadingStore::oldestReadingSecs(qint64 *secs, QString *errorMessage)
+{
+    QSqlQuery query(m_database);
+    if (!query.exec(QStringLiteral(
+            "SELECT COALESCE(CAST(strftime('%s', MIN(recorded_at)) AS INTEGER), 0) FROM sensor_readings"))
+        || !query.next()) {
+        setSqlError(QStringLiteral("Failed to read readings"), query.lastError(), errorMessage);
+        return false;
+    }
+    *secs = query.value(0).toLongLong();
+    return true;
+}
+
+bool SensorReadingStore::outsideSeries(qint64 fromMs, qint64 toMs, qint64 bucketMs, QVariantList *points,
+                                       QString *errorMessage)
+{
+    // Uma hora antes e depois: a linha chega até as bordas do gráfico.
+    const qint64 bucketSecs = std::max<qint64>(3600, bucketMs / 1000);
+    QSqlQuery query(m_database);
+    query.prepare(QStringLiteral(R"SQL(
+        SELECT hour / :bucket AS bucket, AVG(hour), AVG(temp)
+        FROM outside_temperature
+        WHERE hour >= :from AND hour <= :to
+        GROUP BY bucket
+        ORDER BY bucket
+    )SQL"));
+    query.bindValue(QStringLiteral(":bucket"), bucketSecs);
+    query.bindValue(QStringLiteral(":from"), fromMs / 1000 - 3600);
+    query.bindValue(QStringLiteral(":to"), toMs / 1000 + 3600);
+    if (!query.exec()) {
+        setSqlError(QStringLiteral("Failed to load outside temperature"), query.lastError(), errorMessage);
+        return false;
+    }
+    points->clear();
+    while (query.next()) {
+        points->append(QVariantMap{
+            {QStringLiteral("t"), qRound64(query.value(1).toDouble() * 1000.0)},
+            {QStringLiteral("temp"), query.value(2).toDouble()},
+        });
+    }
+    return true;
+}
+
+// ── Exportação ─────────────────────────────────────────────────────────────
+namespace {
+
+// Campo de texto do CSV: entre aspas quando tem ";", aspas ou quebra de linha.
+QString csvText(const QString &text)
+{
+    if (!text.contains(QLatin1Char(';')) && !text.contains(QLatin1Char('"'))
+        && !text.contains(QLatin1Char('\n')) && !text.contains(QLatin1Char('\r'))) {
+        return text;
+    }
+    QString quoted = text;
+    quoted.replace(QLatin1String("\""), QLatin1String("\"\""));
+    return QLatin1Char('"') + quoted + QLatin1Char('"');
+}
+
+// Número com vírgula decimal ("31,25"); vazio quando falta o valor.
+QString csvNumber(const QVariant &value)
+{
+    if (value.isNull()) {
+        return QString();
+    }
+    return QString::number(value.toDouble(), 'f', 2).replace(QLatin1Char('.'), QLatin1Char(','));
+}
+
+} // namespace
+
+bool SensorReadingStore::exportCsv(QIODevice *device, const QString &deviceId, const QDateTime &since,
+                                   int *count, QString *errorMessage)
+{
+    // Nome atual de cada placa (o do registro mais recente que tem nome),
+    // para todas as linhas de uma placa terem o mesmo nome mesmo depois de
+    // renomeada. MAX() faz o SQLite pegar device_name da linha mais recente.
+    QSqlQuery query(m_database);
+    query.prepare(QStringLiteral(R"SQL(
+        WITH names AS (
+            SELECT device_id, device_name, MAX(recorded_at)
+            FROM sensor_readings
+            WHERE device_name IS NOT NULL AND device_name <> ''
+            GROUP BY device_id
+        )
+        SELECT COALESCE(n.device_name, r.device_id), r.device_id, r.recorded_at,
+               r.temp_dht, r.humidity, o.temp
+        FROM sensor_readings r
+        LEFT JOIN names n ON n.device_id = r.device_id
+        LEFT JOIN outside_temperature o
+          ON o.hour = (CAST(strftime('%s', r.recorded_at) AS INTEGER) + 1800) / 3600 * 3600
+        WHERE %1 AND r.recorded_at >= :since
+        ORDER BY r.device_id, r.recorded_at
+    )SQL").arg(deviceId.isEmpty() ? QStringLiteral("1 = 1") : QStringLiteral("r.device_id = :device_id")));
+    if (!deviceId.isEmpty()) {
+        query.bindValue(QStringLiteral(":device_id"), deviceId);
+    }
+    query.bindValue(QStringLiteral(":since"),
+                    sinceFilter(since));
+    query.setForwardOnly(true);
+    if (!query.exec()) {
+        setSqlError(QStringLiteral("Failed to export readings"), query.lastError(), errorMessage);
+        return false;
+    }
+
+    // BOM: sem ele o Excel lê o arquivo como ANSI e estraga os acentos.
+    // Linhas terminadas em CRLF, como o Excel espera.
+    QByteArray buffer("\xEF\xBB\xBF");
+    buffer += "colmeia;id_placa;data_hora;data_hora_utc;temperatura_c;umidade_pct;temperatura_externa_c\r\n";
+    int rows = 0;
+    while (query.next()) {
+        const QDateTime at = QDateTime::fromString(query.value(2).toString(), Qt::ISODateWithMs);
+        const QStringList fields{
+            csvText(query.value(0).toString()),
+            csvText(query.value(1).toString()),
+            at.toLocalTime().toString(QStringLiteral("dd/MM/yyyy HH:mm:ss")),
+            at.toUTC().toString(QStringLiteral("yyyy-MM-ddTHH:mm:ssZ")),
+            csvNumber(query.value(3)),
+            csvNumber(query.value(4)),
+            csvNumber(query.value(5)),
+        };
+        buffer += fields.join(QLatin1Char(';')).toUtf8();
+        buffer += "\r\n";
+        ++rows;
+        // Escreve aos poucos: um histórico grande não fica todo na memória.
+        if (buffer.size() > (1 << 16)) {
+            if (device->write(buffer) != buffer.size()) {
+                if (errorMessage) *errorMessage = device->errorString();
+                return false;
+            }
+            buffer.clear();
+        }
+    }
+    if (!buffer.isEmpty() && device->write(buffer) != buffer.size()) {
+        if (errorMessage) *errorMessage = device->errorString();
+        return false;
+    }
+    *count = rows;
+    return true;
+}
+
+bool SensorReadingStore::countExportRows(const QString &deviceId, const QDateTime &since, int *count,
+                                         QString *errorMessage)
+{
+    QSqlQuery query(m_database);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM sensor_readings WHERE %1 AND recorded_at >= :since")
+                      .arg(deviceId.isEmpty() ? QStringLiteral("1 = 1") : QStringLiteral("device_id = :device_id")));
+    if (!deviceId.isEmpty()) {
+        query.bindValue(QStringLiteral(":device_id"), deviceId);
+    }
+    query.bindValue(QStringLiteral(":since"),
+                    sinceFilter(since));
+    if (!query.exec() || !query.next()) {
+        setSqlError(QStringLiteral("Failed to count readings"), query.lastError(), errorMessage);
+        return false;
+    }
+    *count = query.value(0).toInt();
     return true;
 }
 
@@ -800,6 +1041,18 @@ bool SensorReadingStore::createSchema(QString *errorMessage)
             ON sensor_readings (device_id, recorded_at)
     )SQL"))) {
         setSqlError(QStringLiteral("Failed to update SQLite schema"), deviceTimeIndexQuery.lastError(), errorMessage);
+        return false;
+    }
+
+    // Temperatura externa por hora cheia (ver OutsideWeather).
+    QSqlQuery outsideQuery(m_database);
+    if (!outsideQuery.exec(QStringLiteral(R"SQL(
+        CREATE TABLE IF NOT EXISTS outside_temperature (
+            hour INTEGER PRIMARY KEY,
+            temp REAL NOT NULL
+        )
+    )SQL"))) {
+        setSqlError(QStringLiteral("Failed to update SQLite schema"), outsideQuery.lastError(), errorMessage);
         return false;
     }
 

@@ -4,6 +4,8 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
 #include <QLocale>
 #include <QSet>
 #include <QTimeZone>
@@ -49,6 +51,7 @@ QDateTime cleanupCutoff(int olderThanDays)
 SensorMonitor::SensorMonitor(QObject *parent)
     : QObject(parent)
     , m_cloud(&m_store, this)
+    , m_weather(&m_store, this)
 #ifdef HAVE_QT_BLUETOOTH
     , m_bleClient(this)
 #endif
@@ -75,6 +78,7 @@ void SensorMonitor::start(const QString &databasePath)
     emit databasePathChanged();
     loadLatestReadings();
     m_cloud.start();
+    m_weather.start();
 #ifdef HAVE_QT_BLUETOOTH
     m_bleClient.start();
 #endif
@@ -210,6 +214,52 @@ QVariantMap SensorMonitor::deviceSeries(const QString &deviceId, int rangeHours,
         return {};
     }
     return series;
+}
+
+// ── Exportação ("Exportar dados") ──────────────────────────────────────────
+QVariantMap SensorMonitor::exportCsv(const QUrl &fileUrl, const QString &deviceId, int rangeHours)
+{
+    const auto result = [](bool ok, const QString &message) {
+        return QVariantMap{{QStringLiteral("ok"), ok}, {QStringLiteral("message"), message}};
+    };
+    const QDateTime since = rangeHours > 0
+                                ? QDateTime::currentDateTimeUtc().addSecs(-qint64(rangeHours) * 3600)
+                                : QDateTime();
+
+    // No Android o seletor devolve content://...; o QFile do Qt abre essas
+    // URLs pelo texto completo.
+    QFile file(fileUrl.isLocalFile() ? fileUrl.toLocalFile() : fileUrl.toString());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return result(false, QStringLiteral("Não foi possível criar o arquivo: %1").arg(file.errorString()));
+    }
+    int count = 0;
+    QString errorMessage;
+    const bool ok = m_store.exportCsv(&file, deviceId, since, &count, &errorMessage);
+    file.close();
+    if (!ok) {
+        return result(false, QStringLiteral("A exportação falhou: %1").arg(errorMessage));
+    }
+
+    QString message = count == 0 ? QStringLiteral("Nenhum registro nessa seleção: o arquivo só tem o cabeçalho.")
+                    : count == 1 ? QStringLiteral("1 registro exportado.")
+                                 : QStringLiteral("%1 registros exportados.").arg(QLocale().toString(count));
+    if (fileUrl.isLocalFile()) {
+        message += QStringLiteral(" Arquivo: %1").arg(QDir::toNativeSeparators(fileUrl.toLocalFile()));
+    }
+    return result(true, message);
+}
+
+int SensorMonitor::exportCount(const QString &deviceId, int rangeHours)
+{
+    const QDateTime since = rangeHours > 0
+                                ? QDateTime::currentDateTimeUtc().addSecs(-qint64(rangeHours) * 3600)
+                                : QDateTime();
+    int count = 0;
+    QString errorMessage;
+    if (!m_store.countExportRows(deviceId, since, &count, &errorMessage)) {
+        setStatus(errorMessage);
+    }
+    return count;
 }
 
 // ── Limpeza ("Limpar dados") ───────────────────────────────────────────────

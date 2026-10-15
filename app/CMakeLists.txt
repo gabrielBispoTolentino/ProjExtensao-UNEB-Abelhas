@@ -33,6 +33,8 @@ qt_add_executable(appAbelhasPetterson
     main.cpp
     cloudsync.cpp
     cloudsync.h
+    outsideweather.cpp
+    outsideweather.h
     supabaseconfig.h
     sensormonitor.cpp
     sensormonitor.h
@@ -67,6 +69,8 @@ qt_add_qml_module(appAbelhasPetterson
         RecordIntervalPage.qml
         DevicePage.qml
         DataCleanupPage.qml
+        DataExportPage.qml
+        WeatherLocationPage.qml
         SensorChart.qml
         GlyphIcon.qml
         Theme.qml

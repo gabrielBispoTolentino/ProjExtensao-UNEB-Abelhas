@@ -55,6 +55,7 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("sensorMonitor"), &sensorMonitor);
     engine.rootContext()->setContextProperty(QStringLiteral("boardControl"), boardControlObject);
+    engine.rootContext()->setContextProperty(QStringLiteral("outsideWeather"), sensorMonitor.outsideWeather());
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,

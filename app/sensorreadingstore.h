@@ -4,10 +4,13 @@
 
 #include <QDateTime>
 #include <QList>
+#include <QPair>
 #include <QSqlDatabase>
 #include <QString>
 #include <QVariant>
 #include <QVariantMap>
+
+class QIODevice;
 
 // Uma linha da tabela local sensor_readings.
 struct StoredSensorReading
@@ -81,6 +84,8 @@ public:
     // Resumo das leituras de uma placa desde `since` (todas, se inválido):
     // quantidade, período e, para temperatura e umidade, atual, média,
     // mín./máx. (+ quando), desvio padrão, variação e a correlação entre elas.
+    // Com temperatura externa guardada, temperature também traz
+    // outsideAverage/Min/Max e outsideDifference (média de colmeia - externa).
     bool readingStats(const QString &deviceId, const QDateTime &since,
                       QVariantMap *stats, QString *errorMessage);
     // Menor/maior temperatura de uma placa desde `since` (*count 0 = nenhuma).
@@ -92,6 +97,31 @@ public:
     bool readingSeries(const QString &deviceId, const QDateTime &since, int maxPoints,
                        QVariantMap *series, QString *errorMessage);
     QString databasePath() const;
+
+    // ── Temperatura externa (Open-Meteo, ver OutsideWeather) ───────────────
+    // Uma temperatura por hora cheia (segundos desde a época, UTC) no local
+    // do apiário. As leituras usam a hora cheia mais próxima.
+    bool saveOutsideTemperatures(const QList<QPair<qint64, double>> &hours, QString *errorMessage);
+    bool clearOutsideTemperatures(QString *errorMessage);
+    // Primeira e última hora guardadas (segundos; 0 = nenhuma).
+    bool outsideTemperatureBounds(qint64 *firstSecs, qint64 *lastSecs, QString *errorMessage);
+    // Leitura mais antiga de todas as placas (segundos; 0 = nenhuma): até
+    // onde o histórico externo precisa voltar.
+    bool oldestReadingSecs(qint64 *secs, QString *errorMessage);
+    // Médias em intervalos de bucketMs entre fromMs e toMs, da mais antiga
+    // para a mais nova: [{t (ms desde a época), temp}].
+    bool outsideSeries(qint64 fromMs, qint64 toMs, qint64 bucketMs, QVariantList *points,
+                       QString *errorMessage);
+
+    // ── Exportação ─────────────────────────────────────────────────────────
+    // Escreve em CSV as leituras de uma placa (todas, com deviceId vazio)
+    // desde `since` (todas, se inválido), no formato que o Excel e o
+    // LibreOffice em português abrem direto: UTF-8 com BOM, ";" entre
+    // colunas, vírgula decimal. *count: linhas escritas.
+    bool exportCsv(QIODevice *device, const QString &deviceId, const QDateTime &since, int *count,
+                   QString *errorMessage);
+    // Quantas linhas exportCsv escreveria.
+    bool countExportRows(const QString &deviceId, const QDateTime &since, int *count, QString *errorMessage);
 
 private:
     bool createSchema(QString *errorMessage);

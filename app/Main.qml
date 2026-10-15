@@ -59,7 +59,9 @@ Window {
     ]
     // Ferramentas de dados: funcionam sem Bluetooth.
     readonly property var dataTools: [
-        { page: "cleanup", title: "Limpar dados", detail: "Apagar leituras do aparelho ou da nuvem" }
+        { page: "export",  title: "Exportar dados",    detail: "Salvar as leituras numa planilha (CSV)" },
+        { page: "weather", title: "Local do apiário",  detail: "Cidade da temperatura externa" },
+        { page: "cleanup", title: "Limpar dados",      detail: "Apagar leituras do aparelho ou da nuvem" }
     ]
     property string currentPage: ""
 
@@ -151,8 +153,16 @@ Window {
     Component { id: namePage;     BoardNamePage {} }
     Component { id: restartPage;  RestartBoardPage {} }
     Component { id: intervalPage; RecordIntervalPage {} }
-    Component { id: devicePage;   DevicePage { deviceId: window.selectedDeviceId } }
+    Component {
+        id: devicePage
+        DevicePage {
+            deviceId: window.selectedDeviceId
+            onOpenPageRequested: (pageName) => window.openPage(pageName)
+        }
+    }
     Component { id: cleanupPage;  DataCleanupPage {} }
+    Component { id: exportPage;   DataExportPage {} }
+    Component { id: weatherPage;  WeatherLocationPage {} }
 
     // Estado da nuvem / Bluetooth na faixa do topo: ícone cheio quando conectado.
     component StatusChip: RowLayout {
@@ -402,10 +412,13 @@ Window {
                 Loader {
                     anchors.fill: parent
                     visible: active
-                    active: window.currentPage === "device" || window.currentPage === "cleanup"
+                    active: window.currentPage === "device"
+                            || window.dataTools.some(t => t.page === window.currentPage)
                             || (window.hasBoardTools && window.currentPage !== "")
                     sourceComponent: window.currentPage === "device" ? devicePage
                                    : window.currentPage === "cleanup" ? cleanupPage
+                                   : window.currentPage === "export" ? exportPage
+                                   : window.currentPage === "weather" ? weatherPage
                                    : window.currentPage === "wifi" ? wifiPage
                                    : window.currentPage === "name" ? namePage
                                    : window.currentPage === "restart" ? restartPage

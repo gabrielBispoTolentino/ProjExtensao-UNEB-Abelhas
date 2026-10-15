@@ -21,6 +21,7 @@ QtObject {
 
     readonly property color propolis: "#9A4A17"    // temperatura
     readonly property color sky: "#2F6FA8"         // umidade
+    readonly property color outside: "#6B6F76"     // temperatura externa (referência, tracejada)
     readonly property color sting: "#B42318"       // erros, apagar
     readonly property color stingPale: "#FBE6E3"
 
