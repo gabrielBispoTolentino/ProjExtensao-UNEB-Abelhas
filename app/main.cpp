@@ -15,6 +15,10 @@
 #include "appupdater.h"
 #include "sensormonitor.h"
 
+#ifdef Q_OS_ANDROID
+#include "androidbackground.h"
+#endif
+
 #ifdef HAVE_QT_BLUETOOTH
 #include "boardcontrol.h"
 #endif
@@ -71,6 +75,12 @@ int main(int argc, char *argv[])
     sensorMonitor.start(QDir(dataDir).filePath(QStringLiteral("sensor_readings.db")));
     // Procura uma versão nova no GitHub; se houver, o QML pergunta se atualiza.
     appUpdater.start();
+
+#ifdef Q_OS_ANDROID
+    // Continua rodando fora da tela, com o andamento numa notificação.
+    AndroidBackground background(&sensorMonitor);
+    background.start();
+#endif
 
     return QCoreApplication::exec();
 }

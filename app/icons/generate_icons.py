@@ -2,6 +2,7 @@
 
   icons/bee.svg                                     ícone do computador + logo no app
   android/res/drawable/ic_launcher_foreground.xml   ícone adaptável do Android
+  android/res/drawable/ic_notification.xml          ícone da notificação (silhueta branca)
 
 Os vetores do Android só aceitam caminhos simples (sem círculos, elipses ou
 transformações), então cada forma é escrita aqui como caminho e os dois
@@ -107,12 +108,50 @@ def vector_drawable():
     return "\n".join(parts) + "\n"
 
 
+# Notificação: o Android pinta só a silhueta (tudo que não é transparente
+# fica branco), então listras e olho viram furos (evenOdd) no corpo e na
+# cabeça, e as asas e antenas ficam sem contorno.
+NOTIFICATION_SHAPES = [
+    (ellipse(28, 24, 8, 12, -25), False, None),
+    (ellipse(40, 25, 7, 11, 20), False, None),
+    (BODY_PATH + " " + body_stripe(28, 33) + " " + body_stripe(38, 43), True, None),
+    ("M50,36 L57.5,39 L50,42 Z", False, None),
+    ("M17,30 C15,25 12,22.5 8.5,21.5", None, 2.5),
+    ("M20,30.5 C20.5,25.5 19,22 16,19.5", None, 2.5),
+    (circle(17, 37, 8) + " " + circle(14.2, 35, 2.2), True, None),
+]
+
+
+def notification_drawable():
+    parts = [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        "<!-- Gerado por icons/generate_icons.py - edite as formas lá. -->",
+        '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
+        '    android:width="24dp" android:height="24dp"',
+        '    android:viewportWidth="64" android:viewportHeight="64">',
+    ]
+    for path, even_odd, stroke_width in NOTIFICATION_SHAPES:
+        attrs = [f'android:pathData="{path}"']
+        if stroke_width:
+            attrs += ['android:strokeColor="#FFFFFF"', f'android:strokeWidth="{stroke_width:g}"',
+                      'android:strokeLineCap="round"']
+        else:
+            attrs.append('android:fillColor="#FFFFFF"')
+            if even_odd:
+                attrs.append('android:fillType="evenOdd"')
+        parts.append(f'    <path {" ".join(attrs)}/>')
+    parts.append("</vector>")
+    return "\n".join(parts) + "\n"
+
+
 def main():
     (ROOT / "icons" / "bee.svg").write_text(svg(), encoding="utf-8")
-    drawable = ROOT / "android" / "res" / "drawable" / "ic_launcher_foreground.xml"
-    drawable.parent.mkdir(parents=True, exist_ok=True)
-    drawable.write_text(vector_drawable(), encoding="utf-8")
-    print("gerados icons/bee.svg e", drawable.relative_to(ROOT))
+    drawables = ROOT / "android" / "res" / "drawable"
+    drawables.mkdir(parents=True, exist_ok=True)
+    (drawables / "ic_launcher_foreground.xml").write_text(vector_drawable(), encoding="utf-8")
+    (drawables / "ic_notification.xml").write_text(notification_drawable(), encoding="utf-8")
+    print("gerados icons/bee.svg,", drawables.relative_to(ROOT) / "ic_launcher_foreground.xml",
+          "e", drawables.relative_to(ROOT) / "ic_notification.xml")
 
 
 if __name__ == "__main__":

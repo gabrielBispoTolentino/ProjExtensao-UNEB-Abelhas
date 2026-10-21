@@ -36,6 +36,10 @@ Projeto de extensão da UNEB.
 - Funciona sem internet: guarda as leituras no aparelho e envia para a nuvem
   quando a conexão volta. Conectado por Bluetooth a uma placa sem Wi-Fi, o
   celular também recebe os registros guardados no cartão SD dela.
+- No Android, continua funcionando com o app fora da tela (ou a tela
+  desligada): uma notificação mostra os registros recebidos da placa, os que
+  faltam enviar à nuvem e as placas conectadas. O botão **Encerrar** da
+  notificação fecha o app.
 - Ferramentas da placa por Bluetooth: configurar o Wi-Fi (com lista das redes
   que a placa enxerga), renomear, mudar o intervalo de registro e reiniciar.
 - Limpar dados deste aparelho e/ou da nuvem, por colmeia e por período (apagar
@@ -175,8 +179,8 @@ O banco local do app fica em
   cartão SD, Supabase, Bluetooth, `setup()` e `loop()`).
 - **App:** a parte em C++ cuida dos dados (`sensormonitor`, `cloudsync`,
   `sensorreadingstore`, `outsideweather`, `blesensorclient`,
-  `boardcontrol`, `appupdater`); as telas ficam nos arquivos `.qml`, com
-  cores e tamanhos centralizados em `Theme.qml`.
+  `boardcontrol`, `appupdater`, `androidbackground`); as telas ficam nos
+  arquivos `.qml`, com cores e tamanhos centralizados em `Theme.qml`.
 - **Comentários** em português: cada arquivo começa explicando o que faz,
   arquivos longos são divididos em seções (`// ── Nome ──`) e os comentários
   explicam o porquê, não o óbvio. Nomes de funções e variáveis ficam em inglês.

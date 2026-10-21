@@ -171,6 +171,49 @@ QString SensorMonitor::bleStatusText() const
 #endif
 }
 
+// "Recebendo os registros guardados na placa (120) · Enviando 45 registros
+// para a nuvem · 1 placa conectada por Bluetooth".
+QString SensorMonitor::backgroundStatusText() const
+{
+    QStringList parts;
+    if (!m_dumpReceived.isEmpty()) {
+        int received = 0;
+        for (int n : m_dumpReceived) {
+            received += n;
+        }
+        parts << QStringLiteral("Recebendo os registros guardados na placa (%1)")
+                     .arg(QLocale().toString(received));
+    }
+
+    if (CloudSync::isConfigured()) {
+        const int pending = m_cloud.pendingCount();
+        if (pending == 0) {
+            parts << QStringLiteral("Tudo enviado para a nuvem");
+        } else if (cloudConnected()) {
+            parts << QStringLiteral("Enviando %1 para a nuvem").arg(recordsText(pending));
+        } else {
+            parts << QStringLiteral("%1 para enviar quando houver internet").arg(recordsText(pending));
+        }
+    }
+
+#ifdef HAVE_QT_BLUETOOTH
+    const int boards = m_bleClient.connectedCount();
+    parts << (boards == 0 ? QStringLiteral("Nenhuma placa conectada")
+              : boards == 1 ? QStringLiteral("1 placa conectada por Bluetooth")
+                            : QStringLiteral("%1 placas conectadas por Bluetooth").arg(boards));
+#endif
+    return parts.join(QStringLiteral(" · "));
+}
+
+bool SensorMonitor::blePermissionAnswered() const
+{
+#ifdef HAVE_QT_BLUETOOTH
+    return m_bleClient.state() != BleSensorClient::State::Starting;
+#else
+    return true;
+#endif
+}
+
 QString SensorMonitor::databasePath() const
 {
     return m_store.databasePath();

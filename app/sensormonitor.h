@@ -73,6 +73,10 @@ public:
     bool bleConnected() const;
     QString bleStatusText() const;
     QString databasePath() const;
+    // Resumo curto para a notificação do Android (AndroidBackground).
+    QString backgroundStatusText() const;
+    // O pedido de permissão do Bluetooth já foi respondido (ou não existe).
+    bool blePermissionAnswered() const;
 
 signals:
     void statusChanged();

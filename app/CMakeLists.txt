@@ -142,6 +142,15 @@ if (ANDROID)
         NAME android.permission.ACCESS_FINE_LOCATION ATTRIBUTES maxSdkVersion 30)
     # Abrir o instalador do Android com o APK de uma versão nova (AppUpdater).
     qt_add_android_permission(appAbelhasPetterson NAME android.permission.REQUEST_INSTALL_PACKAGES)
+    # Segundo plano (AndroidBackground + android/src/.../MonitorService.java):
+    # serviço em primeiro plano do tipo "dispositivo conectado" e a notificação
+    # dele. O Android 14+ exige, para esse tipo, uma permissão da lista dele;
+    # CHANGE_NETWORK_STATE é dada na instalação, sem perguntar.
+    qt_add_android_permission(appAbelhasPetterson NAME android.permission.FOREGROUND_SERVICE)
+    qt_add_android_permission(appAbelhasPetterson NAME android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE)
+    qt_add_android_permission(appAbelhasPetterson NAME android.permission.CHANGE_NETWORK_STATE)
+    qt_add_android_permission(appAbelhasPetterson NAME android.permission.POST_NOTIFICATIONS)
+    target_sources(appAbelhasPetterson PRIVATE androidbackground.cpp androidbackground.h)
     add_android_openssl_libraries(appAbelhasPetterson)
 endif()
 

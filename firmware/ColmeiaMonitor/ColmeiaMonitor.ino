@@ -90,7 +90,12 @@ struct SDBatchInfo {
 #define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define BLE_RX_UUID       "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // app -> ESP32
 #define BLE_TX_UUID       "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 -> app (notify)
-#define BLE_CHUNK_SIZE    20   // pedaço seguro com o MTU padrão (23)
+// Tamanho de cada notificação: o MTU que o celular negociou menos 3 (o
+// Android e o Windows pedem um maior ao conectar; a placa aceita até 255, o
+// padrão do NimBLE). Sem negociação vale o MTU padrão, 23: pedaços de 20.
+#define BLE_CHUNK_SIZE    20
+#define BLE_CHUNK_GAP_MS  10   // entre notificações, para não esgotar os buffers do Bluetooth
+#define BLE_NOTIFY_TRIES  20   // notify() sem buffer livre: tenta de novo, para não perder um pedaço
 
 // Comandos do app (RX): uma linha JSON terminada em '\n', que pode chegar em
 // vários pedaços. As respostas vão pelo TX com um campo "type":
@@ -133,9 +138,10 @@ struct SDBatchInfo {
 // Wi-Fi; depois de uma falha, espera SD_FLUSH_RETRY_MS para tentar de novo.
 #define SD_FLUSH_INTERVAL_MS  5000
 #define SD_FLUSH_RETRY_MS     60000
-// Sem Wi-Fi, o celular conectado leva o que ficou no SD, um lote por vez
-// (cada registro leva ~60 ms pelo BLE com o MTU padrão).
-#define DUMP_BATCH            10
+// Sem Wi-Fi, o celular conectado leva o que ficou no SD, um lote por vez.
+// Um registro (~130 bytes) vai numa notificação com MTU negociado, ou em 7
+// com o MTU padrão (~70 ms); 25 por lote cabem com folga no tempo limite.
+#define DUMP_BATCH            25
 #define DUMP_ACK_TIMEOUT_MS   15000   // sem confirmação do app: o lote é enviado de novo
 
 // ── Identificação ──────────────────────────────────────────────────────────
@@ -168,6 +174,7 @@ bool lastFlushFailed = false;
 unsigned long lastWifiAttempt = 0;
 unsigned long lastSensorRead = 0;
 volatile bool bleConnected = false;
+volatile uint16_t bleMtu = 23;   // MTU da conexão atual (23 até o celular negociar outro)
 
 // Despejo do SD pelo Bluetooth (ver dumpSDStep())
 bool dumpWanted = false;        // o celular conectado pediu os registros guardados
@@ -751,11 +758,17 @@ bool flushSDStep() {
 // comandos do app.
 class BleServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) override {
+    bleMtu = connInfo.getMTU();
     bleConnected = true;
     Serial.println("[BLE] Cliente conectado.");
   }
+  void onMTUChange(uint16_t mtu, NimBLEConnInfo& connInfo) override {
+    bleMtu = mtu;
+    Serial.printf("[BLE] MTU negociado: %u bytes.\n", mtu);
+  }
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
     bleConnected = false;
+    bleMtu = 23;
     bleRxLen = 0;        // descarta comando incompleto
     bleRxOverflow = false;
     Serial.println("[BLE] Cliente desconectado — voltando a anunciar.");
@@ -829,17 +842,22 @@ void setupBLE() {
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
-// Envia uma linha JSON pelo TX, em pedaços para funcionar mesmo com o MTU
-// padrão; o app (e os apps de UART) juntam os pedaços até o '\n'.
+// Envia uma linha JSON pelo TX, em pedaços do tamanho que o MTU da conexão
+// permite; o app (e os apps de UART) juntam os pedaços até o '\n'.
 void notifyBLELine(const String& json) {
   if (!bleTx || !bleConnected) return;
 
   String line = json + "\n";
-  for (size_t i = 0; i < line.length(); i += BLE_CHUNK_SIZE) {
-    size_t len = min((size_t)BLE_CHUNK_SIZE, line.length() - i);
-    bleTx->setValue((uint8_t*)line.c_str() + i, len);
-    bleTx->notify();
-    delay(10);
+  size_t chunk = bleMtu > 23 ? bleMtu - 3 : BLE_CHUNK_SIZE;
+  for (size_t i = 0; i < line.length() && bleConnected; i += chunk) {
+    size_t len = min(chunk, line.length() - i);
+    // Um pedaço perdido estraga a linha inteira (no despejo, um registro):
+    // sem buffer livre, espera um pouco e tenta de novo.
+    for (int attempt = 0; attempt < BLE_NOTIFY_TRIES && bleConnected; attempt++) {
+      if (bleTx->notify((const uint8_t*)line.c_str() + i, len)) break;
+      delay(BLE_CHUNK_GAP_MS);
+    }
+    delay(BLE_CHUNK_GAP_MS);
   }
 }
 
@@ -1420,8 +1438,11 @@ void loop() {
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
 
   // Só tenta reconectar se já existirem credenciais salvas (e se o app não
-  // estiver testando uma rede nova agora)
-  if (!provisioning && hasCredentials && !wifiOk && millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
+  // estiver testando uma rede nova agora). Durante o despejo pelo Bluetooth
+  // também não: cada tentativa trava o loop() por até 5 s; volta a tentar
+  // quando o despejo termina ou o celular desconecta.
+  if (!provisioning && !dumpWanted && hasCredentials && !wifiOk
+      && millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
     Serial.println("[WiFi] Tentando reconectar...");
     WiFi.reconnect();
     lastWifiAttempt = millis();
