@@ -12,6 +12,7 @@
 #include <QQuickStyle>
 #include <QStandardPaths>
 
+#include "appupdater.h"
 #include "sensormonitor.h"
 
 #ifdef HAVE_QT_BLUETOOTH
@@ -52,10 +53,13 @@ int main(int argc, char *argv[])
     QObject *boardControlObject = nullptr;
 #endif
 
+    AppUpdater appUpdater;
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("sensorMonitor"), &sensorMonitor);
     engine.rootContext()->setContextProperty(QStringLiteral("boardControl"), boardControlObject);
     engine.rootContext()->setContextProperty(QStringLiteral("outsideWeather"), sensorMonitor.outsideWeather());
+    engine.rootContext()->setContextProperty(QStringLiteral("appUpdater"), &appUpdater);
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,
@@ -65,6 +69,8 @@ int main(int argc, char *argv[])
     engine.loadFromModule("AbelhasPetterson", "Main");
 
     sensorMonitor.start(QDir(dataDir).filePath(QStringLiteral("sensor_readings.db")));
+    // Procura uma versão nova no GitHub; se houver, o QML pergunta se atualiza.
+    appUpdater.start();
 
     return QCoreApplication::exec();
 }

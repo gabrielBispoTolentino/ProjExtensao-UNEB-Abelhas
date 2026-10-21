@@ -31,6 +31,8 @@ endif()
 
 qt_add_executable(appAbelhasPetterson
     main.cpp
+    appupdater.cpp
+    appupdater.h
     cloudsync.cpp
     cloudsync.h
     outsideweather.cpp
@@ -53,6 +55,9 @@ if (TARGET Qt6::Bluetooth)
 else()
     message(WARNING "Qt6 Bluetooth not found - building without BLE support.")
 endif()
+
+# Versão mostrada no app e comparada com a última publicada no GitHub.
+target_compile_definitions(appAbelhasPetterson PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 # Valores do visual (cores, tamanhos de texto), usados como Theme.xxx no QML.
 set_source_files_properties(Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -81,6 +86,7 @@ qt_add_qml_module(appAbelhasPetterson
         HelpText.qml
         MessageBanner.qml
         ConfirmDialog.qml
+        UpdateDialog.qml
         RangeBand.qml
     RESOURCES
         icons/bee.svg
@@ -88,6 +94,8 @@ qt_add_qml_module(appAbelhasPetterson
         # distintos, legíveis no celular ao ar livre.
         fonts/AtkinsonHyperlegible-Regular.ttf
         fonts/AtkinsonHyperlegible-Bold.ttf
+        # Troca os arquivos do app no Windows depois de baixar uma versão nova.
+        updater/install-windows.ps1
 )
 
 # Ícone do app (a abelha): ícone do .exe no Windows e do atalho no Android.
@@ -132,6 +140,8 @@ if (ANDROID)
     qt_add_android_permission(appAbelhasPetterson NAME android.permission.BLUETOOTH_CONNECT)
     qt_add_android_permission(appAbelhasPetterson
         NAME android.permission.ACCESS_FINE_LOCATION ATTRIBUTES maxSdkVersion 30)
+    # Abrir o instalador do Android com o APK de uma versão nova (AppUpdater).
+    qt_add_android_permission(appAbelhasPetterson NAME android.permission.REQUEST_INSTALL_PACKAGES)
     add_android_openssl_libraries(appAbelhasPetterson)
 endif()
 

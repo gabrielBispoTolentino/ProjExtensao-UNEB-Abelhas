@@ -39,6 +39,8 @@ Projeto de extensão da UNEB.
   que a placa enxerga), renomear, mudar o intervalo de registro e reiniciar.
 - Limpar dados deste aparelho e/ou da nuvem, por colmeia e por período (apagar
   na nuvem exige a senha de administrador).
+- Atualização automática: ao abrir, o app procura uma versão nova nesta página
+  de Releases e pergunta se quer atualizar.
 
 **Placa (ESP32)**
 
@@ -70,6 +72,32 @@ Baixe a versão mais recente na página de
 
 O app já vem ligado ao banco do projeto: as colmeias aparecem assim que as
 placas enviam leituras.
+
+### Atualizações
+
+A partir da primeira versão publicada com o atualizador, o app confere ao
+abrir se há uma versão mais nova aqui em Releases. Se houver, mostra o resumo
+das novidades e os botões **Atualizar** e **Agora não** (o botão também fica
+no fim do menu lateral). O arquivo baixado é conferido pelo SHA-256 informado
+pelo GitHub antes de ser instalado.
+
+- **Windows:** o app baixa o `.zip`, fecha, troca os arquivos da pasta e abre
+  de novo já atualizado. Se algo der errado, os arquivos antigos voltam e o
+  app avisa (detalhes em `%TEMP%\AbelhasPettersonUpdate\atualizacao.log`). A
+  pasta do app precisa permitir gravação (não use `Arquivos de Programas`).
+- **Android:** o app baixa o `.apk` e abre o instalador do Android; toque em
+  **Atualizar**. Na primeira vez o Android pede para permitir a instalação de
+  apps vindos do Abelhas Petterson, e o Google Play Protect pode perguntar se
+  quer verificar o app (**Instalar sem verificar** também funciona).
+
+Para publicar uma versão que o atualizador reconheça:
+
+- tag `vX.Y.Z`, maior que a anterior, e a versão igual em `app/CMakeLists.txt`
+  (`VERSION` e `QT_ANDROID_VERSION_CODE`);
+- arquivos `AbelhasPetterson-X.Y.Z-windows.zip` (com `AbelhasPetterson.exe`
+  dentro) e `AbelhasPetterson-X.Y.Z-android.apk`, assinado sempre com a mesma
+  chave (com outra, o Android recusa a atualização);
+- o texto das notas antes do primeiro título `##` é o resumo mostrado no app.
 
 ## Configuração
 
@@ -144,8 +172,8 @@ O banco local do app fica em
   cartão SD, Supabase, Bluetooth, `setup()` e `loop()`).
 - **App:** a parte em C++ cuida dos dados (`sensormonitor`, `cloudsync`,
   `sensorreadingstore`, `outsideweather`, `blesensorclient`,
-  `boardcontrol`); as telas ficam nos arquivos `.qml`, com cores e tamanhos
-  centralizados em `Theme.qml`.
+  `boardcontrol`, `appupdater`); as telas ficam nos arquivos `.qml`, com
+  cores e tamanhos centralizados em `Theme.qml`.
 - **Comentários** em português: cada arquivo começa explicando o que faz,
   arquivos longos são divididos em seções (`// ── Nome ──`) e os comentários
   explicam o porquê, não o óbvio. Nomes de funções e variáveis ficam em inglês.

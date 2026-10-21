@@ -164,6 +164,17 @@ Window {
     Component { id: exportPage;   DataExportPage {} }
     Component { id: weatherPage;  WeatherLocationPage {} }
 
+    // Versão nova no GitHub: o aviso abre sozinho quando ela é encontrada (e
+    // quando uma atualização falha); depois, pelo botão no fim do menu.
+    UpdateDialog { id: updateDialog }
+    Connections {
+        target: appUpdater
+        function onStateChanged() {
+            if ((appUpdater.state === "available" || appUpdater.state === "failed") && !updateDialog.visible)
+                updateDialog.open()
+        }
+    }
+
     // Estado da nuvem / Bluetooth na faixa do topo: ícone cheio quando conectado.
     component StatusChip: RowLayout {
         property string glyph
@@ -625,6 +636,28 @@ Window {
 
             Item {
                 Layout.fillHeight: true
+            }
+
+            // Versão do app e, se o GitHub tem uma mais nova, o botão para atualizar.
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 20
+                Layout.rightMargin: 20
+                spacing: 8
+
+                ActionButton {
+                    Layout.fillWidth: true
+                    visible: appUpdater.latestVersion !== ""
+                    kind: "primary"
+                    text: "Atualizar para a versão " + appUpdater.latestVersion
+                    onClicked: {
+                        sideMenu.close()
+                        updateDialog.open()
+                    }
+                }
+                HelpText {
+                    text: "Versão " + appUpdater.currentVersion
+                }
             }
         }
     }
