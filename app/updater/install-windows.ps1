@@ -9,6 +9,11 @@
 # com outras coisas (Área de Trabalho, Downloads) e nada além do que veio no
 # .zip é apagado. O andamento fica em <WorkDir>\atualizacao.log.
 #
+# Até a 1.4.0 o app se chamava Abelhas Petterson: o .zip traz também uma
+# cópia AbelhasPetterson.exe para os atualizadores dessas versões. Ela não é
+# instalada, e a da pasta do app é apagada depois de uma atualização que deu
+# certo (o app passa a abrir só por BeeDuino.exe).
+#
 # Caminhos são usados com as funções do .NET, que não tratam [ ] como curinga.
 
 param(
@@ -23,7 +28,8 @@ $ErrorActionPreference = 'Stop'
 $log = [System.IO.Path]::Combine($WorkDir, 'atualizacao.log')
 $newDir = [System.IO.Path]::Combine($WorkDir, 'novo')
 $backupDir = [System.IO.Path]::Combine($WorkDir, 'anterior')
-$exe = [System.IO.Path]::Combine($AppDir, 'AbelhasPetterson.exe')
+$exe = [System.IO.Path]::Combine($AppDir, 'BeeDuino.exe')
+$legacyExe = 'AbelhasPetterson.exe'
 
 function Write-Log([string] $text) {
     $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $text
@@ -66,11 +72,11 @@ try {
     Remove-Folder $newDir
     Remove-Folder $backupDir
     Expand-Archive -LiteralPath $Package -DestinationPath $newDir -Force
-    # O .zip traz uma pasta AbelhasPetterson-<versão>-windows\ com o app dentro.
-    $newExe = Get-ChildItem -LiteralPath $newDir -Recurse -File -Filter 'AbelhasPetterson.exe' |
+    # O .zip traz uma pasta BeeDuino-<versão>-windows\ com o app dentro.
+    $newExe = Get-ChildItem -LiteralPath $newDir -Recurse -File -Filter 'BeeDuino.exe' |
         Select-Object -First 1
     if (-not $newExe) {
-        throw 'AbelhasPetterson.exe não está no pacote.'
+        throw 'BeeDuino.exe não está no pacote.'
     }
     $source = $newExe.DirectoryName
 
@@ -78,6 +84,7 @@ try {
     $files = Get-ChildItem -LiteralPath $source -Recurse -File
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($source.Length).TrimStart('\')
+        if ($relative -ieq $legacyExe) { continue }   # só para os atualizadores antigos
         $target = [System.IO.Path]::Combine($AppDir, $relative)
         if ([System.IO.File]::Exists($target)) {
             Copy-WithRetry $target ([System.IO.Path]::Combine($backupDir, $relative))
@@ -86,7 +93,18 @@ try {
         $copied.Add($relative)
         Copy-WithRetry $file.FullName $target
     }
-    Write-Log "Pronto: $($files.Count) arquivos copiados."
+    Write-Log "Pronto: $($copied.Count) arquivos copiados."
+
+    # O nome antigo sai da pasta: dali em diante o app é aberto por BeeDuino.exe.
+    $oldExe = [System.IO.Path]::Combine($AppDir, $legacyExe)
+    if ([System.IO.File]::Exists($oldExe)) {
+        try {
+            [System.IO.File]::Delete($oldExe)
+            Write-Log "$legacyExe (nome antigo) apagado."
+        } catch {
+            Write-Log "Não foi possível apagar ${legacyExe}: $($_.Exception.Message)"
+        }
+    }
 } catch {
     $failed = $true
     Write-Log "Falhou: $($_.Exception.Message)"

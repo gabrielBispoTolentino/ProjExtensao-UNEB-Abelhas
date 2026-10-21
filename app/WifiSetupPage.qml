@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 // Conecta uma ESP32 à internet: o app fala com a placa por Bluetooth,

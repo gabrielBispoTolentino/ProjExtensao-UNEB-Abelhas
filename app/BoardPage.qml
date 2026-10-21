@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
 // Layout comum das ferramentas do menu lateral: aviso no topo e corpo com

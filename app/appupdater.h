@@ -14,14 +14,19 @@ class QNetworkReply;
 // qual é a versão mais recente; se for mais nova, o QML oferece atualizar.
 //
 // Cada versão publicada precisa ter a tag vX.Y.Z e os arquivos
-// AbelhasPetterson-X.Y.Z-windows.zip e AbelhasPetterson-X.Y.Z-android.apk.
+// BeeDuino-X.Y.Z-windows.zip e BeeDuino-X.Y.Z-android.apk (só o fim do nome
+// importa: -windows.zip / -android.apk).
 // O primeiro parágrafo das notas da versão aparece no aviso do app.
 //
 //  * Windows: baixa o .zip e chama updater/install-windows.ps1, que espera o
 //    app fechar, copia os arquivos novos por cima dos antigos (voltando os
 //    antigos se algo falhar) e abre o app de novo. Só funciona na pasta do
-//    .zip (AbelhasPetterson.exe numa pasta onde dá para escrever); nas
+//    .zip (BeeDuino.exe numa pasta onde dá para escrever); nas
 //    versões de desenvolvimento o botão abre a página de download.
+//    Até a 1.4.0 o app se chamava Abelhas Petterson, e o atualizador dessas
+//    versões procura AbelhasPetterson.exe no .zip e abre esse arquivo: por
+//    isso o .zip leva também uma cópia com o nome antigo, que o script novo
+//    não instala e apaga da pasta do app.
 //  * Android: baixa o .apk e abre o instalador do sistema. O Android não
 //    deixa um app se atualizar sozinho: a pessoa toca em "Atualizar" e, na
 //    primeira vez, permite "instalar apps desconhecidos" para este app. O

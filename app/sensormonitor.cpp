@@ -77,18 +77,12 @@ void SensorMonitor::start(const QString &databasePath)
         return;
     }
 
-    emit databasePathChanged();
     loadLatestReadings();
     m_cloud.start();
     m_weather.start();
 #ifdef HAVE_QT_BLUETOOTH
     m_bleClient.start();
 #endif
-}
-
-QString SensorMonitor::status() const
-{
-    return m_status;
 }
 
 bool SensorMonitor::cloudConnected() const
@@ -139,11 +133,7 @@ QString SensorMonitor::bleStatusText() const
     if (count > 0) {
         QString text = count == 1 ? QStringLiteral("1 placa conectada por Bluetooth")
                                   : QStringLiteral("%1 placas conectadas por Bluetooth").arg(count);
-        if (!m_dumpReceived.isEmpty()) {
-            int received = 0;
-            for (int n : m_dumpReceived) {
-                received += n;
-            }
+        if (const int received = dumpReceivedTotal(); received > 0) {
             text += QStringLiteral(" - recebendo os registros guardados na placa (%1)")
                         .arg(QLocale().toString(received));
         }
@@ -176,11 +166,7 @@ QString SensorMonitor::bleStatusText() const
 QString SensorMonitor::backgroundStatusText() const
 {
     QStringList parts;
-    if (!m_dumpReceived.isEmpty()) {
-        int received = 0;
-        for (int n : m_dumpReceived) {
-            received += n;
-        }
+    if (const int received = dumpReceivedTotal(); received > 0) {
         parts << QStringLiteral("Recebendo os registros guardados na placa (%1)")
                      .arg(QLocale().toString(received));
     }
@@ -212,11 +198,6 @@ bool SensorMonitor::blePermissionAnswered() const
 #else
     return true;
 #endif
-}
-
-QString SensorMonitor::databasePath() const
-{
-    return m_store.databasePath();
 }
 
 // Uma entrada por placa, com a leitura mais recente. Usada pela lista no QML.
@@ -459,7 +440,6 @@ void SensorMonitor::setStatus(const QString &status)
 
     m_status = status;
     qInfo().noquote() << status;
-    emit statusChanged();
 }
 
 // Detalhes técnicos ficam no log; a interface mostra os textos de estado.
@@ -501,10 +481,18 @@ void SensorMonitor::handleBleMessage(const QString &key, const QByteArray &paylo
         return;
     }
 
+    // Conta para conferir o lote do despejo (repetidos também contam: já estão guardados).
+    DumpState &dump = m_dumps[key];
+    ++dump.allRecords;
+    if (reading.fromSd) {
+        ++dump.sdRecords;
+        dump.sdFlagSeen = true;
+    }
+
     // Registro: guardado localmente e enviado ao Supabase (agora ou quando houver internet).
     bool inserted = false;
     if (!m_store.insertReading(reading, false, &inserted, &errorMessage)) {
-        m_dumpStoreFailed.insert(key);
+        dump.storeFailed = true;
         setStatus(errorMessage);
         return;
     }
@@ -529,7 +517,7 @@ void SensorMonitor::handleBleControl(const QString &key, const QJsonObject &mess
     }
 
     if (message.value(QStringLiteral("done")).toBool()) {
-        const int received = m_dumpReceived.take(key);
+        const int received = m_dumps.take(key).received;
         if (received > 0) {
             logMessage(QStringLiteral("BLE: %1 stored record(s) received from the board").arg(received));
         }
@@ -540,22 +528,44 @@ void SensorMonitor::handleBleControl(const QString &key, const QJsonObject &mess
         return;   // "state": "wifi": a placa envia o SD sozinha
     }
 
-    // Um registro do lote não foi guardado: sem confirmação, a placa manda o
-    // lote de novo depois do tempo limite.
-    if (m_dumpStoreFailed.remove(key)) {
+    // Sem confirmação, a placa manda o lote de novo depois do tempo limite:
+    // um registro não foi guardado, ou chegaram menos que o lote diz (uma
+    // linha estragada no caminho seria apagada do SD sem nunca ter chegado).
+    DumpState &dump = m_dumps[key];
+    const int expected = message.value(QStringLiteral("count")).toInt();
+    const int arrived = dump.sdFlagSeen ? dump.sdRecords : dump.allRecords;
+    const bool storeFailed = dump.storeFailed;
+    dump.sdRecords = 0;
+    dump.allRecords = 0;
+    dump.storeFailed = false;
+    if (storeFailed) {
         logMessage(QStringLiteral("BLE: stored-records batch not saved, waiting for the board to resend it"));
+        return;
+    }
+    if (arrived < expected) {
+        logMessage(QStringLiteral("BLE: stored-records batch had %1 record(s) but %2 arrived, "
+                                  "waiting for the board to resend it").arg(expected).arg(arrived));
         return;
     }
     m_bleClient.sendCommand(key, QJsonObject{
         {QStringLiteral("cmd"), QStringLiteral("dumpAck")},
         {QStringLiteral("pos"), message.value(QStringLiteral("pos"))},
     });
-    m_dumpReceived[key] += message.value(QStringLiteral("count")).toInt();
+    dump.received += expected;
     emit connectionChanged();
 #else
     Q_UNUSED(key)
     Q_UNUSED(message)
 #endif
+}
+
+int SensorMonitor::dumpReceivedTotal() const
+{
+    int total = 0;
+    for (const DumpState &dump : m_dumps) {
+        total += dump.received;
+    }
+    return total;
 }
 
 // Conexão caiu: o despejo dela para (a placa continua de onde parou na próxima).
@@ -564,13 +574,12 @@ void SensorMonitor::handleBleDevicesChanged()
 #ifdef HAVE_QT_BLUETOOTH
     const QMap<QString, QString> ready = m_bleClient.readyDevices();
     bool changed = false;
-    for (auto it = m_dumpReceived.begin(); it != m_dumpReceived.end();) {
+    for (auto it = m_dumps.begin(); it != m_dumps.end();) {
         if (ready.contains(it.key())) {
             ++it;
         } else {
-            m_dumpStoreFailed.remove(it.key());
-            it = m_dumpReceived.erase(it);
-            changed = true;
+            changed = changed || it->received > 0;
+            it = m_dumps.erase(it);
         }
     }
     if (changed) {

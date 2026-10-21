@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QUrl>
+#include <QtNumeric>
 
 namespace {
 
@@ -198,7 +199,8 @@ void CloudSync::onPullFinished(QNetworkReply *reply, int generation)
         reading.deviceId   = row.value(QStringLiteral("device_id")).toString();
         reading.name       = row.value(QStringLiteral("device_name")).toString();
         reading.tempDht    = row.value(QStringLiteral("temperature")).toDouble();
-        reading.humidity   = row.value(QStringLiteral("humidity")).toDouble();
+        const QJsonValue humidity = row.value(QStringLiteral("humidity"));
+        reading.humidity   = humidity.isDouble() ? humidity.toDouble() : qQNaN();   // NULL: desconhecida
         reading.boot       = static_cast<qint64>(row.value(QStringLiteral("boot")).toDouble());
         reading.seq        = static_cast<qint64>(row.value(QStringLiteral("seq")).toDouble());
         reading.recordFlag = true;   // toda linha do Supabase é um registro

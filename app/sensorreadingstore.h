@@ -96,7 +96,6 @@ public:
     // época), temp, hum}]}; firstMs/lastMs são a primeira e a última leitura.
     bool readingSeries(const QString &deviceId, const QDateTime &since, int maxPoints,
                        QVariantMap *series, QString *errorMessage);
-    QString databasePath() const;
 
     // ── Temperatura externa (Open-Meteo, ver OutsideWeather) ───────────────
     // Uma temperatura por hora cheia (segundos desde a época, UTC) no local
@@ -131,5 +130,4 @@ private:
 
     QString m_connectionName;
     QSqlDatabase m_database;
-    QString m_databasePath;
 };

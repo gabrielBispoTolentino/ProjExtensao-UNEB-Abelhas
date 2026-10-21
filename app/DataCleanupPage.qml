@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 // Apaga leituras: de uma placa ou de todas, só as antigas ou tudo, neste

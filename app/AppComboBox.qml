@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 
 // ComboBox do estilo Basic com contorno visível (o original não tem).
 ComboBox {

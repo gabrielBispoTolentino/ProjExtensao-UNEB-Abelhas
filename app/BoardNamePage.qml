@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 // Renomeia uma placa. O nome fica salvo na própria placa, vai junto com cada

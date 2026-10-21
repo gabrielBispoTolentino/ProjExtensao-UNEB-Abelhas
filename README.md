@@ -1,15 +1,16 @@
-# ProjExtensão UNEB Abelhas
+# BeeDuino
 
 Monitoramento de colmeias com ESP32: uma placa dentro da colmeia mede
-temperatura e umidade, e o app **Abelhas Petterson** (Windows e Android)
-mostra as leituras ao vivo, o histórico e as estatísticas de cada colmeia.
-Projeto de extensão da UNEB.
+temperatura e umidade, e o app **BeeDuino** (Windows e Android) mostra as
+leituras ao vivo, o histórico e as estatísticas de cada colmeia. Projeto de
+extensão da UNEB (ProjExtensão UNEB Abelhas). Até a versão 1.4.0 o app se
+chamava *Abelhas Petterson*.
 
 ```
  Colmeia                         Nuvem                     Celular / PC
 ┌───────────────┐   Wi-Fi    ┌──────────────┐  internet  ┌──────────────────┐
-│ ESP32 + DHT22 │ ─────────► │   Supabase   │ ─────────► │ App Abelhas      │
-│ + cartão SD   │            └──────────────┘            │ Petterson        │
+│ ESP32 + DHT22 │ ─────────► │   Supabase   │ ─────────► │   App BeeDuino   │
+│ + cartão SD   │            └──────────────┘            │                  │
 │               │ ──────────── Bluetooth (ao vivo) ────► │                  │
 └───────────────┘                                        └──────────────────┘
 ```
@@ -35,7 +36,8 @@ Projeto de extensão da UNEB.
   que abre direto no Excel, LibreOffice ou Google Planilhas.
 - Funciona sem internet: guarda as leituras no aparelho e envia para a nuvem
   quando a conexão volta. Conectado por Bluetooth a uma placa sem Wi-Fi, o
-  celular também recebe os registros guardados no cartão SD dela.
+  celular também recebe os registros guardados no cartão SD dela; cada lote
+  só é apagado do cartão depois que o app confirma que recebeu todos.
 - No Android, continua funcionando com o app fora da tela (ou a tela
   desligada): uma notificação mostra os registros recebidos da placa, os que
   faltam enviar à nuvem e as placas conectadas. O botão **Encerrar** da
@@ -55,7 +57,12 @@ Projeto de extensão da UNEB.
 - Sem internet, guarda os registros no cartão SD e envia depois: pelo Wi-Fi
   da placa ou, sem ele, pelo celular conectado por Bluetooth (o celular
   guarda os registros e os envia à nuvem quando tiver internet).
-- Hora certa pela internet ou, sem internet, pelo celular conectado.
+- Hora certa pela internet ou, sem internet, pelo celular conectado. Com um
+  relógio **DS3231** (opcional, ver a montagem), a placa guarda a hora mesmo
+  desligada: depois de uma queda de energia, continua datando os registros.
+- Registros que não podem ser datados (feitos antes de a placa ter hora, num
+  boot que terminou antes de alguém acertar o relógio) não são apagados:
+  ficam em `sem_hora.txt` no cartão, para recuperação manual.
 - Abre o hotspot **Colmeia-Setup** para configurar o Wi-Fi quando não tem rede.
 
 ## Estrutura do repositório
@@ -63,7 +70,10 @@ Projeto de extensão da UNEB.
 | Pasta | Conteúdo |
 |---|---|
 | `app/` | App em Qt 6 / QML (Windows e Android) |
+| `app/tests/` | Testes automáticos do app |
+| `app/tools/` | Empacotamento das versões |
 | `firmware/ColmeiaMonitor/` | Código da ESP32 (Arduino) |
+| `firmware/tests/` | Simulação da placa no PC, com testes |
 | `supabase/` | Estrutura do banco de dados na nuvem |
 
 ## Instalação do app
@@ -71,39 +81,46 @@ Projeto de extensão da UNEB.
 Baixe a versão mais recente na página de
 [Releases](https://github.com/gabrielBispoTolentino/ProjExtensao-UNEB-Abelhas/releases):
 
-- **Windows:** baixe o `.zip`, extraia e abra `AbelhasPetterson.exe`. Não
-  precisa instalar.
+- **Windows:** baixe o `.zip`, extraia e abra `BeeDuino.exe`. Não precisa
+  instalar.
 - **Android (9 ou mais novo):** baixe o `.apk` no celular e abra. O Android
   vai pedir para permitir a instalação de fontes desconhecidas. Na primeira
-  abertura, permita o Bluetooth (e a localização, no Android 11 ou anterior).
+  abertura, permita o Bluetooth (e a localização, no Android 11 ou anterior)
+  e as notificações.
 
 O app já vem ligado ao banco do projeto: as colmeias aparecem assim que as
 placas enviam leituras.
 
 ### Atualizações
 
-A partir da primeira versão publicada com o atualizador, o app confere ao
-abrir se há uma versão mais nova aqui em Releases. Se houver, mostra o resumo
-das novidades e os botões **Atualizar** e **Agora não** (o botão também fica
-no fim do menu lateral). O arquivo baixado é conferido pelo SHA-256 informado
-pelo GitHub antes de ser instalado.
+O app confere ao abrir se há uma versão mais nova aqui em Releases (a partir
+da 1.2.0). Se houver, mostra o resumo das novidades e os botões **Atualizar**
+e **Agora não** (o botão também fica no fim do menu lateral). O arquivo
+baixado é conferido pelo SHA-256 informado pelo GitHub antes de ser instalado.
 
 - **Windows:** o app baixa o `.zip`, fecha, troca os arquivos da pasta e abre
   de novo já atualizado. Se algo der errado, os arquivos antigos voltam e o
-  app avisa (detalhes em `%TEMP%\AbelhasPettersonUpdate\atualizacao.log`). A
-  pasta do app precisa permitir gravação (não use `Arquivos de Programas`).
+  app avisa (detalhes em `%TEMP%\BeeDuinoUpdate\atualizacao.log`). A pasta do
+  app precisa permitir gravação (não use `Arquivos de Programas`).
 - **Android:** o app baixa o `.apk` e abre o instalador do Android; toque em
   **Atualizar**. Na primeira vez o Android pede para permitir a instalação de
-  apps vindos do Abelhas Petterson, e o Google Play Protect pode perguntar se
-  quer verificar o app (**Instalar sem verificar** também funciona).
+  apps vindos do BeeDuino, e o Google Play Protect pode perguntar se quer
+  verificar o app (**Instalar sem verificar** também funciona).
+
+Quem vem da versão com o nome antigo atualiza normalmente: no Windows os
+dados passam sozinhos para a pasta nova, e o programa passa a ser
+`BeeDuino.exe` (atalhos para `AbelhasPetterson.exe` deixam de funcionar na
+atualização seguinte).
 
 Para publicar uma versão que o atualizador reconheça:
 
 - tag `vX.Y.Z`, maior que a anterior, e a versão igual em `app/CMakeLists.txt`
   (`VERSION` e `QT_ANDROID_VERSION_CODE`);
-- arquivos `AbelhasPetterson-X.Y.Z-windows.zip` (com `AbelhasPetterson.exe`
-  dentro) e `AbelhasPetterson-X.Y.Z-android.apk`, assinado sempre com a mesma
-  chave (com outra, o Android recusa a atualização);
+- `BeeDuino-X.Y.Z-windows.zip` montado por `app/tools/package_windows.py`
+  (ele inclui uma cópia `AbelhasPetterson.exe`, que o atualizador das versões
+  1.2.0 a 1.4.0 procura);
+- `BeeDuino-X.Y.Z-android.apk`, assinado sempre com a mesma chave (com outra,
+  o Android recusa a atualização);
 - o texto das notas antes do primeiro título `##` é o resumo mostrado no app.
 
 ## Configuração
@@ -133,10 +150,12 @@ Só é preciso para criar um banco novo; o repositório já usa o do projeto.
 |---|---|
 | DHT22 (dados) | GPIO 32 |
 | Módulo microSD | CS 5, SCK 18, MISO 19, MOSI 23 |
+| Relógio DS3231 (opcional) | SDA 21, SCL 22, alimentação 3,3 V, com bateria CR2032 |
 | Alimentação | VCC e GND de cada módulo (veja a tensão do seu módulo SD) |
 
 O sensor fica na melgueira, logo acima do ninho, exposto ao ar que sobe por
-uma tela.
+uma tela. Sem o DS3231 tudo funciona; ele só garante a hora depois de uma
+queda de energia antes de o celular ou o Wi-Fi acertarem o relógio.
 
 ### 3. Gravação do firmware
 
@@ -160,7 +179,8 @@ uma tela.
 
 Requisitos: **Qt 6.11** com os kits *MinGW 64-bit* (Windows) e/ou *Android*,
 e o módulo **Qt Connectivity** (Bluetooth), instalados pelo Qt Maintenance
-Tool. Para Android, também o Android SDK, o NDK 27 e o JDK 17.
+Tool. Para Android, também o Android SDK, o NDK 27 e o JDK 17; com Python
+instalado, o APK leva só o estilo de controles que o app usa.
 
 Abra `app/CMakeLists.txt` no Qt Creator, escolha o kit e compile. Pela linha
 de comando (Windows):
@@ -168,19 +188,44 @@ de comando (Windows):
 ```sh
 cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:/Qt/6.11.1/mingw_64
 cmake --build build
+python app/tools/package_windows.py build/appBeeDuino.exe X.Y.Z saida
 ```
 
 O banco local do app fica em
-`%APPDATA%\AbelhasPetterson\SensorMonitor\sensor_readings.db` no Windows.
+`%APPDATA%\BeeDuino\SensorMonitor\sensor_readings.db` no Windows.
+
+## Testes
+
+Nenhum teste usa o banco real nem o Supabase de verdade.
+
+- **App** (`app/tests/`, Qt Test): leitura das mensagens da placa, banco
+  local, estatísticas, exportação, envio e download com um Supabase falso,
+  recebimento do cartão SD pelo Bluetooth, atualizador, mudança da pasta de
+  dados e todas as telas.
+  ```sh
+  cmake -S app/tests -B build-tests -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.11.1/mingw_64 -DBEEDUINO_APP_BUILD_DIR=build
+  cmake --build build-tests
+  ctest --test-dir build-tests --output-on-failure
+  ```
+- **Firmware** (`firmware/tests/`): o `ColmeiaMonitor.ino` de verdade roda no
+  PC sobre uma ESP32 simulada (relógio, cartão SD, Wi-Fi, Supabase,
+  Bluetooth e DS3231), com um celular simulado. Precisa do Python e do
+  ArduinoJson da pasta de bibliotecas do Arduino.
+  ```sh
+  cmake -S firmware/tests -B build-fw -G Ninja
+  cmake --build build-fw
+  ctest --test-dir build-fw --output-on-failure
+  ```
 
 ## Organização do código
 
 - **Firmware:** um único arquivo, dividido em seções (configuração, Wi-Fi,
-  cartão SD, Supabase, Bluetooth, `setup()` e `loop()`).
+  cartão SD, Supabase, Bluetooth, relógio, `setup()` e `loop()`).
 - **App:** a parte em C++ cuida dos dados (`sensormonitor`, `cloudsync`,
   `sensorreadingstore`, `outsideweather`, `blesensorclient`,
-  `boardcontrol`, `appupdater`, `androidbackground`); as telas ficam nos
-  arquivos `.qml`, com cores e tamanhos centralizados em `Theme.qml`.
+  `boardcontrol`, `appupdater`, `androidbackground`, `legacydata`); as telas
+  ficam nos arquivos `.qml`, com cores e tamanhos centralizados em
+  `Theme.qml`.
 - **Comentários** em português: cada arquivo começa explicando o que faz,
   arquivos longos são divididos em seções (`// ── Nome ──`) e os comentários
   explicam o porquê, não o óbvio. Nomes de funções e variáveis ficam em inglês.

@@ -11,7 +11,6 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QMap>
-#include <QSet>
 #include <QUrl>
 #include <QVariantList>
 
@@ -22,13 +21,11 @@ class SensorMonitor : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QVariantList devices READ devices NOTIFY devicesChanged)
-    Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     // Estado das conexões mostrado ao usuário (texto + estado para os ícones).
     Q_PROPERTY(bool cloudConnected READ cloudConnected NOTIFY connectionChanged)
     Q_PROPERTY(QString cloudStatusText READ cloudStatusText NOTIFY connectionChanged)
     Q_PROPERTY(bool bleConnected READ bleConnected NOTIFY connectionChanged)
     Q_PROPERTY(QString bleStatusText READ bleStatusText NOTIFY connectionChanged)
-    Q_PROPERTY(QString databasePath READ databasePath NOTIFY databasePathChanged)
     // Tela "Limpar dados".
     Q_PROPERTY(bool cloudConfigured READ cloudConfigured CONSTANT)
     Q_PROPERTY(bool cleaning READ cleaning NOTIFY cleanupChanged)
@@ -67,21 +64,17 @@ public:
     bool cleanupFailed() const { return m_cleanupFailed; }
 
     QVariantList devices() const;
-    QString status() const;
     bool cloudConnected() const;
     QString cloudStatusText() const;
     bool bleConnected() const;
     QString bleStatusText() const;
-    QString databasePath() const;
     // Resumo curto para a notificação do Android (AndroidBackground).
     QString backgroundStatusText() const;
     // O pedido de permissão do Bluetooth já foi respondido (ou não existe).
     bool blePermissionAnswered() const;
 
 signals:
-    void statusChanged();
     void connectionChanged();
-    void databasePathChanged();
     void devicesChanged();
     void deviceReadingAdded(const QString &deviceId);   // um registro novo foi guardado
     void cleanupChanged();
@@ -110,18 +103,25 @@ private:
     // de cada cartão). Atualizada quando chega um registro, não a cada valor ao vivo.
     struct TemperatureRange { double min = 0.0; double max = 0.0; };
     QMap<QString, TemperatureRange> m_ranges;
-    // Despejo do SD pelo Bluetooth, por conexão: registros recebidos até
-    // agora, e conexões em que um registro do lote atual não foi guardado
-    // (esse lote não é confirmado e a placa o envia de novo).
-    QMap<QString, int> m_dumpReceived;
-    QSet<QString> m_dumpStoreFailed;
+    // Despejo do SD pelo Bluetooth, por conexão. O lote só é confirmado se
+    // todos os registros dele chegaram e foram guardados; senão a placa o
+    // manda de novo depois do tempo limite.
+    struct DumpState {
+        int received = 0;        // registros de lotes já confirmados (para a tela)
+        int sdRecords = 0;       // registros com "sd": true desde o último fim de lote
+        int allRecords = 0;      // todos os registros desde então (firmware antigo, sem "sd")
+        bool sdFlagSeen = false; // a placa marca os registros do despejo
+        bool storeFailed = false;
+    };
+    QMap<QString, DumpState> m_dumps;
+    int dumpReceivedTotal() const;
     SensorReadingStore m_store;
     CloudSync m_cloud;
     OutsideWeather m_weather;
 #ifdef HAVE_QT_BLUETOOTH
     BleSensorClient m_bleClient;
 #endif
-    QString m_status;
+    QString m_status;   // última mensagem do log (não repete a mesma)
 
     // Limpeza em andamento (primeiro a parte da nuvem, depois a local).
     bool m_cleaning = false;

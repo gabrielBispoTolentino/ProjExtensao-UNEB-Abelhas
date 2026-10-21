@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
 // Histórico de uma placa: estatísticas de temperatura e umidade no período

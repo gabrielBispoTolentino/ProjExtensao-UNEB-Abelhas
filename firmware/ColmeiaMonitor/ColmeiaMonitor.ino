@@ -13,6 +13,9 @@
 // Para compilar (Arduino IDE, núcleo ESP32 3.3.x):
 //   * Partition Scheme: "Huge APP" (o programa tem ~1,4 MB);
 //   * bibliotecas: DHT sensor library, ArduinoJson e NimBLE-Arduino.
+//
+// Opcional: um relógio DS3231 no I2C (SDA 21, SCL 22) guarda a hora com a
+// placa desligada; sem ele, a hora vem do NTP ou do celular a cada boot.
 
 #include <DHT.h>
 #include <WiFi.h>
@@ -25,6 +28,7 @@
 #include "FS.h"
 #include "SD.h"
 #include "SPI.h"
+#include <Wire.h>
 // Bluetooth com NimBLE (biblioteca "NimBLE-Arduino"): usa bem menos RAM que a
 // pilha BLE padrão (Bluedroid). Com a Bluedroid sobrava pouca memória para o
 // TLS (HTTPS) e a conexão falhava com "SSL - Memory allocation failed".
@@ -49,7 +53,8 @@ struct SDReading {
 // Um lote lido do SD por readSDBatch(). Também no topo, pelo mesmo motivo.
 struct SDBatchInfo {
   int      count    = 0;      // registros lidos
-  int      dropped  = 0;      // linhas que não dá mais para enviar, puladas
+  int      dropped  = 0;      // linhas corrompidas ou de firmware antigo (sem seq), puladas
+  std::vector<String> undated; // registros de um boot anterior sem hora: vão para UNDATED_FILE
   uint32_t endPos   = 0;      // posição no arquivo depois do lote
   uint32_t fileSize = 0;
   bool     toEnd    = false;  // o lote chegou ao fim do arquivo
@@ -65,6 +70,17 @@ struct SDBatchInfo {
 #define SD_MISO        19
 #define SD_MOSI        23
 #define LOG_FILE       "/datalog.txt"
+// Registros que nunca poderão ir para o banco: feitos antes de a placa ter
+// hora, num boot que terminou (ex.: queda de energia) antes de o celular ou
+// o NTP acertarem o relógio. Ficam guardados aqui, para recuperação manual,
+// em vez de serem apagados.
+#define UNDATED_FILE   "/sem_hora.txt"
+#define UNDATED_BATCH_MAX 32   // por lote (o lote guarda essas linhas na memória até ser confirmado)
+
+// Relógio DS3231 (opcional, I2C)
+#define RTC_SDA        21
+#define RTC_SCL        22
+#define RTC_ADDRESS    0x68
 
 // ── Hotspot de configuração ────────────────────────────────────────────────
 #define AP_SSID "Colmeia-Setup"
@@ -203,12 +219,14 @@ uint32_t bootCount = 0;              // nº do boot atual (NVS); millis() só va
 uint32_t readingSeq = 0;             // nº do registro neste boot; boot + seq identificam cada registro
 bool clockWasValid = false;          // só para avisar no Serial quando a hora for acertada
 volatile bool ntpSynced = false;     // hora veio da internet: a hora do celular não a substitui
+volatile bool rtcNeedsWrite = false; // o NTP acertou a hora: gravar no DS3231 (no loop, fora do callback)
+bool rtcPresent = false;             // há um DS3231 no I2C
 
 // Registro em andamento: soma das leituras válidas desde o último registro
 float recordSumT = 0;
 float recordSumH = 0;
 int recordCount = 0;
-unsigned long lastRecordAt = 0;
+unsigned long lastRecordAt = 0;      // início do intervalo de registro atual
 uint16_t recordMinutes = RECORD_MINUTES_DEFAULT; // intervalo de registro (NVS "sys"/"rec_min")
 bool cloudOk = false;                // último envio ao Supabase deu certo
 
@@ -234,9 +252,89 @@ String formatTime(time_t ts) {
   return String(text);
 }
 
+// ── Relógio de tempo real DS3231 (opcional) ────────────────────────────────
+// Com bateria (CR2032), o DS3231 continua contando a hora com a placa
+// desligada: depois de uma queda de energia a placa liga já sabendo a hora,
+// e os registros feitos antes de o celular passar saem datados. Guarda a
+// hora em UTC. Sem o módulo, rtcPresent fica false e nada muda.
+uint8_t toBcd(int value) { return (uint8_t)(((value / 10) << 4) | (value % 10)); }
+int fromBcd(uint8_t value) { return (value >> 4) * 10 + (value & 0x0F); }
+
+// Dias desde 01/01/1970 de uma data do calendário (algoritmo de Howard
+// Hinnant), sem passar pelo fuso como o mktime().
+long daysFromCivil(int y, int m, int d) {
+  y -= m <= 2;
+  const long era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (long)doe - 719468;
+}
+
+// Hora guardada no DS3231; 0 se não há módulo ou se ele perdeu a hora (o
+// bit OSF indica que o oscilador parou, ex.: bateria acabou).
+time_t readRTC() {
+  Wire.beginTransmission(RTC_ADDRESS);
+  Wire.write(0x0F);                                   // registrador de estado
+  if (Wire.endTransmission() != 0 || Wire.requestFrom(RTC_ADDRESS, 1) != 1) return 0;
+  if (Wire.read() & 0x80) return 0;                    // OSF
+  Wire.beginTransmission(RTC_ADDRESS);
+  Wire.write(0x00);                                   // segundos em diante
+  if (Wire.endTransmission() != 0 || Wire.requestFrom(RTC_ADDRESS, 7) != 7) return 0;
+  const int second = fromBcd(Wire.read() & 0x7F);
+  const int minute = fromBcd(Wire.read() & 0x7F);
+  const int hour   = fromBcd(Wire.read() & 0x3F);      // modo 24 h
+  Wire.read();                                        // dia da semana
+  const int day    = fromBcd(Wire.read() & 0x3F);
+  const int month  = fromBcd(Wire.read() & 0x1F);
+  const int year   = 2000 + fromBcd(Wire.read());
+  const time_t t = (time_t)daysFromCivil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second;
+  return t > MIN_VALID_EPOCH ? t : 0;
+}
+
+void writeRTC(time_t t) {
+  if (!rtcPresent || t <= MIN_VALID_EPOCH) return;
+  struct tm utc;
+  gmtime_r(&t, &utc);
+  Wire.beginTransmission(RTC_ADDRESS);
+  Wire.write(0x00);
+  Wire.write(toBcd(utc.tm_sec));
+  Wire.write(toBcd(utc.tm_min));
+  Wire.write(toBcd(utc.tm_hour));                     // bit 6 = 0: modo 24 h
+  Wire.write(toBcd(utc.tm_wday + 1));
+  Wire.write(toBcd(utc.tm_mday));
+  Wire.write(toBcd(utc.tm_mon + 1));
+  Wire.write(toBcd(utc.tm_year - 100));
+  Wire.endTransmission();
+  // Limpa o OSF: a hora gravada agora vale.
+  Wire.beginTransmission(RTC_ADDRESS);
+  Wire.write(0x0F);
+  Wire.write(0x00);
+  Wire.endTransmission();
+}
+
+// No boot, antes de tudo que usa a hora: com o módulo, o relógio já começa certo.
+void setupRTC() {
+  Wire.begin(RTC_SDA, RTC_SCL);
+  Wire.beginTransmission(RTC_ADDRESS);
+  rtcPresent = Wire.endTransmission() == 0;
+  if (!rtcPresent) {
+    Serial.println("[RTC] Nenhum DS3231 no I2C (opcional): a hora vem do NTP ou do celular.");
+    return;
+  }
+  const time_t t = readRTC();
+  if (t == 0) {
+    Serial.println("[RTC] DS3231 sem hora válida (bateria?): espera o NTP ou o celular.");
+    return;
+  }
+  struct timeval tv = { t, 0 };
+  settimeofday(&tv, nullptr);
+  Serial.printf("[RTC] Hora restaurada do DS3231: %s\n", formatTime(t).c_str());
+}
+
 // Acerta o relógio com a hora enviada pelo celular, só enquanto a placa não
 // tiver a hora da internet (NTP), mais confiável que um celular com o
-// relógio errado.
+// relógio errado. O DS3231, se houver, guarda a hora nova.
 void setClockFromApp(time_t ts) {
   if (ts <= MIN_VALID_EPOCH || ntpSynced) return;
 
@@ -245,6 +343,7 @@ void setClockFromApp(time_t ts) {
 
   struct timeval tv = { ts, 0 };
   settimeofday(&tv, nullptr);
+  writeRTC(ts);
   Serial.printf("[Hora] Relógio acertado pelo app: %s\n", formatTime(ts).c_str());
 }
 
@@ -700,10 +799,17 @@ bool readSDBatch(SDReading* batch, int maxCount, SDBatchInfo* info) {
       info->endPos = afterLine;
       continue;
     }
-    if (!parseSDLine(line, &r) || r.seq == 0 || (r.ts <= MIN_VALID_EPOCH && r.boot != bootCount)) {
-      // Corrompida, formato antigo (sem seq) ou sem hora de um boot anterior:
-      // o banco exige seq e hora, que não podem mais ser recuperados.
+    if (!parseSDLine(line, &r) || r.seq == 0) {
+      // Corrompida ou de firmware antigo (sem seq): o banco exige o seq.
       info->dropped++;
+      info->endPos = afterLine;
+      continue;
+    }
+    if (r.ts <= MIN_VALID_EPOCH && r.boot != bootCount) {
+      // Sem hora, de um boot anterior: não dá mais para datar. Vai para
+      // UNDATED_FILE quando o lote for confirmado (commitSDBatch).
+      if ((int)info->undated.size() >= UNDATED_BATCH_MAX) break;
+      info->undated.push_back(line);
       info->endPos = afterLine;
       continue;
     }
@@ -718,13 +824,27 @@ bool readSDBatch(SDReading* batch, int maxCount, SDBatchInfo* info) {
   f.close();
 
   if (info->dropped > 0) {
-    Serial.printf("[SD] %d linha(s) antiga(s) sem identificação/hora descartada(s).\n", info->dropped);
+    Serial.printf("[SD] %d linha(s) corrompida(s) ou sem identificação descartada(s).\n", info->dropped);
   }
   return true;
 }
 
-// O lote foi entregue: avança sd_pos ou, no fim do arquivo, zera o log.
+// O lote foi entregue: guarda os registros sem hora em UNDATED_FILE e avança
+// sd_pos ou, no fim do arquivo, zera o log.
 void commitSDBatch(const SDBatchInfo& info) {
+  if (!info.undated.empty()) {
+    const bool newFile = !SD.exists(UNDATED_FILE);
+    File f = SD.open(UNDATED_FILE, FILE_APPEND);
+    if (!f) {
+      Serial.println("[SD] Falha ao abrir " UNDATED_FILE " — o lote fica para depois.");
+      return;   // nada avança: as linhas continuam no log
+    }
+    if (newFile) f.println(SD_LOG_HEADER);
+    for (const String& line : info.undated) f.println(line);
+    f.close();
+    Serial.printf("[SD] %u registro(s) sem hora (de um boot anterior) guardado(s) em " UNDATED_FILE ".\n",
+                  (unsigned)info.undated.size());
+  }
   if (info.toEnd) {
     resetSDLog();
   } else if (info.endPos != sdSentPos) {
@@ -893,6 +1013,7 @@ void sendRecordBLE(const SDReading& r, bool live) {
   payload["boot"]     = r.boot;
   payload["seq"]      = r.seq;
   payload["rec"]      = true;   // marca de registro: o app só guarda/envia o que tem isso
+  if (!live) payload["sd"] = true;   // do despejo: o app conta esses para confirmar o lote
   if (r.ts) payload["ts"] = (long long)r.ts;
 
   char buffer[250];
@@ -1291,6 +1412,7 @@ void setup() {
   Serial.begin(115200);
 
   dht.begin();
+  setupRTC();
 
   // Conta os boots: boot + seq identificam cada registro, e registros do SD
   // sem hora só podem ter a hora calculada pelo millis() se forem do boot
@@ -1319,7 +1441,8 @@ void setup() {
   // Hora pela internet: o SNTP sincroniza sozinho sempre que houver Wi-Fi.
   // (Precisa vir depois do connectWiFi(), que inicializa a pilha de rede.)
   sntp_set_time_sync_notification_cb([](struct timeval* tv) {
-    ntpSynced = true; // a partir daqui a hora do celular é ignorada
+    ntpSynced = true;     // a partir daqui a hora do celular é ignorada
+    rtcNeedsWrite = true; // o loop() grava no DS3231 (I2C fora da tarefa do SNTP)
   });
   configTzTime(TIMEZONE, NTP_SERVER_1, NTP_SERVER_2);
 
@@ -1438,20 +1561,18 @@ void loop() {
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
 
   // Só tenta reconectar se já existirem credenciais salvas (e se o app não
-  // estiver testando uma rede nova agora). Durante o despejo pelo Bluetooth
-  // também não: cada tentativa trava o loop() por até 5 s; volta a tentar
-  // quando o despejo termina ou o celular desconecta.
+  // estiver testando uma rede nova agora, nem levando o SD pelo Bluetooth).
+  // Não espera a conexão: o loop() segue lendo o sensor, e as próximas
+  // voltas veem o Wi-Fi quando ele subir.
   if (!provisioning && !dumpWanted && hasCredentials && !wifiOk
       && millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
     Serial.println("[WiFi] Tentando reconectar...");
     WiFi.reconnect();
     lastWifiAttempt = millis();
-
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 5000) {
-      delay(200);
-    }
-    wifiOk = (WiFi.status() == WL_CONNECTED);
+  }
+  if (rtcNeedsWrite && timeIsValid()) {
+    rtcNeedsWrite = false;
+    writeRTC(time(nullptr));
   }
   if (!wifiOk) {
     cloudOk = false;
@@ -1466,8 +1587,13 @@ void loop() {
     lastFlushFailed = !flushSDStep();
   }
 
-  if (millis() - lastRecordAt >= (unsigned long)recordMinutes * 60000UL) {
-    lastRecordAt = millis();
+  // Um registro a cada intervalo, contado do início do anterior (não de
+  // quando o loop() chegou aqui): atrasos do loop não empurram os seguintes.
+  // Se ficou mais de um intervalo para trás, recomeça a contagem de agora.
+  const unsigned long interval = (unsigned long)recordMinutes * 60000UL;
+  if (millis() - lastRecordAt >= interval) {
+    lastRecordAt += interval;
+    if (millis() - lastRecordAt >= interval) lastRecordAt = millis();
     saveRecord(ts, wifiOk);
   }
 }

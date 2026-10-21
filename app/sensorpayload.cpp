@@ -65,6 +65,7 @@ bool SensorPayload::fromJson(const QByteArray &json, SensorPayload *payload, QSt
     parsed.boot = static_cast<qint64>(object.value(QStringLiteral("boot")).toDouble());
     parsed.seq  = static_cast<qint64>(object.value(QStringLiteral("seq")).toDouble());
     parsed.recordFlag = object.value(QStringLiteral("rec")).toBool();
+    parsed.fromSd = object.value(QStringLiteral("sd")).toBool();
 
     if (payload) {
         *payload = parsed;

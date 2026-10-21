@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 // "Tem certeza?" antes de uma ação que não pode ser desfeita. O botão de

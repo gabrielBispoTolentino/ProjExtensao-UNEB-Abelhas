@@ -8,7 +8,7 @@
 struct SensorPayload
 {
     double tempDht = 0.0;
-    double humidity = 0.0;
+    double humidity = 0.0;  // NaN = desconhecida (linha do Supabase com umidade NULL)
     QString deviceId;
     qint64 timestamp = 0;   // quando a placa mediu (segundos Unix, UTC); 0 = desconhecido
     QString name;           // nome amigável da placa, se ela enviou
@@ -20,6 +20,9 @@ struct SensorPayload
     // (a cada 2 s, só para a tela) não trazem - nem as leituras a cada 2 s
     // de firmwares antigos, que tinham boot/seq mas não são registros.
     bool recordFlag = false;
+    // Registro antigo do cartão SD, mandado no despejo ("sd": true): o
+    // SensorMonitor confere quantos chegaram antes de confirmar o lote.
+    bool fromSd = false;
 
     bool hasRecordId() const { return boot > 0 && seq > 0; }
     static bool fromJson(const QByteArray &json, SensorPayload *payload, QString *errorMessage);

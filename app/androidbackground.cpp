@@ -51,9 +51,11 @@ AndroidBackground::AndroidBackground(SensorMonitor *monitor, QObject *parent)
     });
 }
 
+// Roda quando o app termina (voltar na lista de colmeias ou "Encerrar"):
+// para o serviço e termina o processo logo depois (ver finishAndExit()).
 AndroidBackground::~AndroidBackground()
 {
-    QJniObject::callStaticMethod<void>(serviceClass, "stop", "(Landroid/content/Context;)V",
+    QJniObject::callStaticMethod<void>(serviceClass, "finishAndExit", "(Landroid/content/Context;)V",
                                        androidContext().object<jobject>());
 }
 

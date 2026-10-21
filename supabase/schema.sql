@@ -1,4 +1,4 @@
--- Abelhas Petterson - estrutura do banco no Supabase.
+-- BeeDuino - estrutura do banco no Supabase.
 -- Rode uma vez no painel do Supabase: SQL Editor -> New query -> colar -> Run.
 -- Pode rodar de novo sem problema (tudo é "if not exists" / substituído).
 --

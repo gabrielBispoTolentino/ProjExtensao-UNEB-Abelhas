@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 
 // Botão padrão do app. kind: "primary" (mel, a ação principal da tela),
 // "danger" (apaga algo) ou "secondary" (só contorno).

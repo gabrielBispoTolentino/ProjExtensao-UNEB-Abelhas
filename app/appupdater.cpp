@@ -49,7 +49,7 @@ QNetworkRequest githubRequest(const QUrl &url, int timeoutMs)
     QNetworkRequest request(url);
     // O GitHub recusa pedidos sem User-Agent.
     request.setHeader(QNetworkRequest::UserAgentHeader,
-                      QStringLiteral("AbelhasPetterson/%1").arg(QStringLiteral(APP_VERSION)));
+                      QStringLiteral("BeeDuino/%1").arg(QStringLiteral(APP_VERSION)));
     request.setTransferTimeout(timeoutMs);
     return request;
 }
@@ -69,11 +69,14 @@ QString releaseSummary(QString body)
 
 // Windows: só a pasta do .zip pode ser atualizada no lugar. Um executável
 // com outro nome é uma versão de desenvolvimento (pasta de build).
+// AbelhasPetterson.exe: o atualizador da 1.4.0 ou anterior instalou esta
+// versão e a abriu pelo nome antigo (ver appupdater.h).
 bool appFolderInstallable()
 {
 #if defined(Q_OS_WIN)
     const QFileInfo exe(QCoreApplication::applicationFilePath());
-    if (exe.fileName().compare(QStringLiteral("AbelhasPetterson.exe"), Qt::CaseInsensitive) != 0) {
+    if (exe.fileName().compare(QStringLiteral("BeeDuino.exe"), Qt::CaseInsensitive) != 0
+        && exe.fileName().compare(QStringLiteral("AbelhasPetterson.exe"), Qt::CaseInsensitive) != 0) {
         return false;
     }
     // Testa criando um arquivo: as permissões do NTFS não aparecem no QFileInfo.
@@ -125,7 +128,7 @@ void AppUpdater::check()
         return;
     }
     // Endereço trocável só para testes, com um servidor local no lugar do GitHub.
-    const QString override = qEnvironmentVariable("ABELHAS_UPDATE_API_URL");
+    const QString override = qEnvironmentVariable("BEEDUINO_UPDATE_API_URL");
     const QUrl url(override.isEmpty() ? QString::fromLatin1(latestReleaseApi) : override);
 
     QNetworkRequest request = githubRequest(url, checkTimeoutMs);
@@ -308,7 +311,7 @@ void AppUpdater::launchInstaller()
     // precisa de um arquivo .ps1 de verdade.
     const QString script = QDir(workDir()).filePath(QStringLiteral("install-windows.ps1"));
     QFile::remove(script);
-    if (!QFile::copy(QStringLiteral(":/qt/qml/AbelhasPetterson/updater/install-windows.ps1"), script)) {
+    if (!QFile::copy(QStringLiteral(":/qt/qml/BeeDuino/updater/install-windows.ps1"), script)) {
         fail(QStringLiteral("Não foi possível preparar o instalador."));
         return;
     }
@@ -380,6 +383,6 @@ QString AppUpdater::workDir() const
 #else
     // Caminho curto: o .zip tem caminhos de até ~140 caracteres e o
     // Expand-Archive não passa de 260 no total.
-    return QDir(QDir::tempPath()).filePath(QStringLiteral("AbelhasPettersonUpdate"));
+    return QDir(QDir::tempPath()).filePath(QStringLiteral("BeeDuinoUpdate"));
 #endif
 }

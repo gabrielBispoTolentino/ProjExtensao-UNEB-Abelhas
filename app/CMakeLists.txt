@@ -1,14 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
 
-# App Abelhas Petterson: monitor de colmeias (Qt 6 / QML, Windows e Android).
-project(AbelhasPetterson VERSION 1.4.0 LANGUAGES CXX)
+# App BeeDuino (até a 1.4.0, "Abelhas Petterson"): monitor de colmeias (Qt 6 / QML, Windows e Android).
+project(BeeDuino VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Svg: o ícone/logo da abelha é um SVG (também instala o plugin de imagem SVG).
-# QuickControls2: o app usa o estilo Basic (com as cores de Theme.qml) para
-# ficar igual no Windows e no Android.
+# Os controles são os do estilo Basic (import QtQuick.Controls.Basic nos
+# .qml), com as cores de Theme.qml: iguais no Windows e no Android, e só esse
+# estilo vai no pacote.
 find_package(Qt6 REQUIRED COMPONENTS Network Quick QuickControls2 Sql Svg)
 # Opcional: receber leituras direto da ESP32 por Bluetooth LE. Para ativar,
 # instale "Qt Connectivity" (Qt Bluetooth) pelo Qt Maintenance Tool.
@@ -29,8 +30,10 @@ if (ANDROID)
     include(${android_openssl_SOURCE_DIR}/android_openssl.cmake)
 endif()
 
-qt_add_executable(appAbelhasPetterson
+qt_add_executable(appBeeDuino
     main.cpp
+    legacydata.cpp
+    legacydata.h
     appupdater.cpp
     appupdater.h
     cloudsync.cpp
@@ -47,23 +50,23 @@ qt_add_executable(appAbelhasPetterson
 )
 
 if (TARGET Qt6::Bluetooth)
-    target_sources(appAbelhasPetterson PRIVATE
+    target_sources(appBeeDuino PRIVATE
         blesensorclient.cpp blesensorclient.h
         boardcontrol.cpp boardcontrol.h)
-    target_link_libraries(appAbelhasPetterson PRIVATE Qt6::Bluetooth)
-    target_compile_definitions(appAbelhasPetterson PRIVATE HAVE_QT_BLUETOOTH)
+    target_link_libraries(appBeeDuino PRIVATE Qt6::Bluetooth)
+    target_compile_definitions(appBeeDuino PRIVATE HAVE_QT_BLUETOOTH)
 else()
     message(WARNING "Qt6 Bluetooth not found - building without BLE support.")
 endif()
 
 # Versão mostrada no app e comparada com a última publicada no GitHub.
-target_compile_definitions(appAbelhasPetterson PRIVATE APP_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(appBeeDuino PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 # Valores do visual (cores, tamanhos de texto), usados como Theme.xxx no QML.
 set_source_files_properties(Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
-qt_add_qml_module(appAbelhasPetterson
-    URI AbelhasPetterson
+qt_add_qml_module(appBeeDuino
+    URI BeeDuino
     QML_FILES
         Main.qml
         BoardPage.qml
@@ -103,23 +106,19 @@ qt_add_qml_module(appAbelhasPetterson
 if (WIN32)
     # Biblioteca própria: o windres falha com caminhos de include com espaços/
     # parênteses herdados do Qt (ex.: um Vulkan SDK em "Nova pasta (4)").
-    add_library(appAbelhasPettersonIcon OBJECT icons/appicon.rc)
-    target_link_libraries(appAbelhasPetterson PRIVATE appAbelhasPettersonIcon)
+    add_library(appBeeDuinoIcon OBJECT icons/appicon.rc)
+    target_link_libraries(appBeeDuino PRIVATE appBeeDuinoIcon)
 endif()
 
-# Propriedades de pacote para macOS/iOS (não usadas por este projeto).
-set_target_properties(appAbelhasPetterson PROPERTIES
-#    MACOSX_BUNDLE_GUI_IDENTIFIER com.example.appAbelhasPetterson
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
-    MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE TRUE
-)
+# App de janela no Windows (sem console).
+set_target_properties(appBeeDuino PROPERTIES WIN32_EXECUTABLE TRUE)
 
 if (ANDROID)
-    set_target_properties(appAbelhasPetterson PROPERTIES
+    set_target_properties(appBeeDuino PROPERTIES
+        # Identificador do app no Android: fica com o nome antigo, senão o
+        # Android trataria a BeeDuino como outro app (sem atualização por cima).
         QT_ANDROID_PACKAGE_NAME "com.abelhaspetterson.sensormonitor"
-        QT_ANDROID_APP_NAME "Abelhas Petterson"
+        QT_ANDROID_APP_NAME "BeeDuino"
         QT_ANDROID_VERSION_NAME ${PROJECT_VERSION}
         QT_ANDROID_VERSION_CODE 5
         QT_ANDROID_MIN_SDK_VERSION 28
@@ -128,44 +127,63 @@ if (ANDROID)
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
         QT_ANDROID_APP_ICON "@mipmap/ic_launcher"
     )
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.INTERNET)
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.ACCESS_NETWORK_STATE)
+    qt_add_android_permission(appBeeDuino NAME android.permission.INTERNET)
+    qt_add_android_permission(appBeeDuino NAME android.permission.ACCESS_NETWORK_STATE)
     # Bluetooth LE: permissões antigas até o Android 11, SCAN/CONNECT no 12+.
     # A localização precisa é exigida para procurar no Android 11 e anteriores.
-    qt_add_android_permission(appAbelhasPetterson
+    qt_add_android_permission(appBeeDuino
         NAME android.permission.BLUETOOTH ATTRIBUTES maxSdkVersion 30)
-    qt_add_android_permission(appAbelhasPetterson
+    qt_add_android_permission(appBeeDuino
         NAME android.permission.BLUETOOTH_ADMIN ATTRIBUTES maxSdkVersion 30)
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.BLUETOOTH_SCAN)
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.BLUETOOTH_CONNECT)
-    qt_add_android_permission(appAbelhasPetterson
+    qt_add_android_permission(appBeeDuino NAME android.permission.BLUETOOTH_SCAN)
+    qt_add_android_permission(appBeeDuino NAME android.permission.BLUETOOTH_CONNECT)
+    qt_add_android_permission(appBeeDuino
         NAME android.permission.ACCESS_FINE_LOCATION ATTRIBUTES maxSdkVersion 30)
     # Abrir o instalador do Android com o APK de uma versão nova (AppUpdater).
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.REQUEST_INSTALL_PACKAGES)
+    qt_add_android_permission(appBeeDuino NAME android.permission.REQUEST_INSTALL_PACKAGES)
     # Segundo plano (AndroidBackground + android/src/.../MonitorService.java):
     # serviço em primeiro plano do tipo "dispositivo conectado" e a notificação
     # dele. O Android 14+ exige, para esse tipo, uma permissão da lista dele;
     # CHANGE_NETWORK_STATE é dada na instalação, sem perguntar.
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.FOREGROUND_SERVICE)
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE)
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.CHANGE_NETWORK_STATE)
-    qt_add_android_permission(appAbelhasPetterson NAME android.permission.POST_NOTIFICATIONS)
-    target_sources(appAbelhasPetterson PRIVATE androidbackground.cpp androidbackground.h)
-    add_android_openssl_libraries(appAbelhasPetterson)
+    qt_add_android_permission(appBeeDuino NAME android.permission.FOREGROUND_SERVICE)
+    qt_add_android_permission(appBeeDuino NAME android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE)
+    qt_add_android_permission(appBeeDuino NAME android.permission.CHANGE_NETWORK_STATE)
+    qt_add_android_permission(appBeeDuino NAME android.permission.POST_NOTIFICATIONS)
+    target_sources(appBeeDuino PRIVATE androidbackground.cpp androidbackground.h)
+    add_android_openssl_libraries(appBeeDuino)
+
+    # Só o estilo Basic no APK: o qmlimportscanner (que diz ao androiddeployqt
+    # o que copiar) passa por tools/qml_imports_basic_only.py, que tira os
+    # outros estilos (o seletor de arquivos do Qt puxa todos; o app só usa o
+    # Basic). Sem Python, o APK sai com todos, como antes.
+    find_package(Python3 COMPONENTS Interpreter)
+    unset(_scanner)
+    foreach(_config RELWITHDEBINFO RELEASE MINSIZEREL DEBUG)
+        get_target_property(_location Qt6::qmlimportscanner IMPORTED_LOCATION_${_config})
+        if (_location AND NOT _scanner)
+            set(_scanner "${_location}")
+        endif()
+    endforeach()
+    if (Python3_Interpreter_FOUND AND _scanner AND CMAKE_HOST_WIN32)
+        set(_wrapper "${CMAKE_CURRENT_BINARY_DIR}/qmlimportscanner_basic_only.bat")
+        file(TO_NATIVE_PATH "${_scanner}" _scanner_native)
+        file(TO_NATIVE_PATH "${Python3_EXECUTABLE}" _python_native)
+        file(TO_NATIVE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tools/qml_imports_basic_only.py" _filter_native)
+        file(WRITE "${_wrapper}"
+             "@echo off\r\n\"${_scanner_native}\" %* | \"${_python_native}\" -I \"${_filter_native}\"\r\n")
+        foreach(_config RELWITHDEBINFO RELEASE MINSIZEREL DEBUG)
+            set_target_properties(Qt6::qmlimportscanner PROPERTIES IMPORTED_LOCATION_${_config} "${_wrapper}")
+        endforeach()
+    else()
+        message(STATUS "Android: all Qt Quick Controls styles will be packaged (no Python/Windows host)")
+    endif()
 endif()
 
-target_link_libraries(appAbelhasPetterson
+target_link_libraries(appBeeDuino
     PRIVATE
         Qt6::Network
         Qt6::Quick
         Qt6::QuickControls2
         Qt6::Sql
         Qt6::Svg
-)
-
-include(GNUInstallDirs)
-install(TARGETS appAbelhasPetterson
-    BUNDLE DESTINATION .
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

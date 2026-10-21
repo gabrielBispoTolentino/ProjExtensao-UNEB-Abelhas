@@ -56,7 +56,6 @@ public:
     // SensorReadingStore::deleteReadings. Termina com remoteDeleteFinished.
     enum class DeleteResult { Done, Offline, WrongPassword, PasswordNotSet, NotInstalled, ServerError };
     void deleteRemote(const QString &adminPassword, const QString &deviceId, const QDateTime &before);
-    bool isDeleting() const { return m_deleting; }
 
 signals:
     void readingsReceived(const QList<SensorPayload> &readings);

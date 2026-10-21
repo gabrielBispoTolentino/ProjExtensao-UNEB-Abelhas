@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 
 // Uma opção de um conjunto pequeno (período, modo do gráfico): mel quando escolhida.
 Button {

@@ -1,6 +1,5 @@
 import QtCore
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 
@@ -44,13 +43,13 @@ Item {
         count = sensorMonitor.exportCount(deviceId, rangeHours)
     }
 
-    // Ex.: "abelhas-colmeia-67-2026-10-15.csv".
+    // Ex.: "beeduino-colmeia-67-2026-10-15.csv".
     function suggestedName() {
         const device = sensorMonitor.devices.find(d => d.deviceId === deviceId)
         const board = deviceId === "" ? "todas" : (device ? device.name : deviceId)
         const slug = board.normalize("NFD").replace(/[̀-ͯ]/g, "")
                           .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-        return "abelhas-" + (slug || "placa") + "-" + Qt.formatDate(new Date(), "yyyy-MM-dd") + ".csv"
+        return "beeduino-" + (slug || "placa") + "-" + Qt.formatDate(new Date(), "yyyy-MM-dd") + ".csv"
     }
 
     Component.onCompleted: {

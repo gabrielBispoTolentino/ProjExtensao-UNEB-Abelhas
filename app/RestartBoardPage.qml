@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
 // Reinicia uma placa à distância (ex.: após uma falha do sensor), com confirmação.

@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 // Cidade do apiário, de onde vem a temperatura externa (Open-Meteo) que o

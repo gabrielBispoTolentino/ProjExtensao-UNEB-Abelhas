@@ -40,7 +40,6 @@ bool SensorReadingStore::open(const QString &path, QString *errorMessage)
         return false;
     }
 
-    m_databasePath = path;
     return createSchema(errorMessage);
 }
 
@@ -68,7 +67,8 @@ bool SensorReadingStore::insertReading(const SensorPayload &reading, bool fromCl
                     reading.name.isEmpty() ? QVariant() : QVariant(reading.name));
     query.bindValue(QStringLiteral(":recorded_at"), recordedAt.toString(Qt::ISODateWithMs));
     query.bindValue(QStringLiteral(":temp_dht"), reading.tempDht);
-    query.bindValue(QStringLiteral(":humidity"), reading.humidity);
+    query.bindValue(QStringLiteral(":humidity"),
+                    std::isnan(reading.humidity) ? QVariant() : QVariant(reading.humidity));
     const bool identified = reading.hasRecordId();
     query.bindValue(QStringLiteral(":boot"), identified ? QVariant(reading.boot) : QVariant());
     query.bindValue(QStringLiteral(":seq"),  identified ? QVariant(reading.seq) : QVariant());
@@ -138,9 +138,9 @@ StoredSensorReading readStoredReading(const QSqlQuery &query)
     reading.deviceId = query.value(1).toString();
     reading.recordedAt = query.value(2).toString();
     reading.tempDht = query.value(3).toDouble();
-    // humidity pode ser NULL em linhas anteriores a essa coluna;
-    // toDouble() de um QVariant NULL devolve 0.0.
-    reading.humidity = query.value(4).toDouble();
+    // humidity é NULL quando a umidade não é conhecida (Supabase, ou linhas
+    // anteriores a essa coluna): NaN, e não 0, para a tela mostrar "–".
+    reading.humidity = query.value(4).isNull() ? qQNaN() : query.value(4).toDouble();
     reading.deviceName = query.value(5).toString();
     return reading;
 }
@@ -537,7 +537,7 @@ bool SensorReadingStore::temperatureRange(const QString &deviceId, const QDateTi
         WHERE device_id = :device_id AND recorded_at >= :since
     )SQL"));
     query.bindValue(QStringLiteral(":device_id"), deviceId);
-    query.bindValue(QStringLiteral(":since"), since.toUTC().toString(Qt::ISODateWithMs));
+    query.bindValue(QStringLiteral(":since"), sinceFilter(since));
     if (!query.exec() || !query.next()) {
         setSqlError(QStringLiteral("Failed to compute temperature range"), query.lastError(), errorMessage);
         return false;
@@ -827,11 +827,6 @@ bool SensorReadingStore::countExportRows(const QString &deviceId, const QDateTim
     }
     *count = query.value(0).toInt();
     return true;
-}
-
-QString SensorReadingStore::databasePath() const
-{
-    return m_databasePath;
 }
 
 bool SensorReadingStore::createSchema(QString *errorMessage)

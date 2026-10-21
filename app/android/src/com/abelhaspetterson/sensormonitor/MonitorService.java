@@ -30,12 +30,13 @@ import android.util.Log;
 
 public class MonitorService extends Service
 {
-    private static final String TAG = "AbelhasPetterson";
+    private static final String TAG = "BeeDuino";
     private static final String CHANNEL_ID = "monitor";
     private static final int NOTIFICATION_ID = 1;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4201;
     private static final String ACTION_QUIT = "com.abelhaspetterson.sensormonitor.QUIT";
     private static final int QUIT_GRACE_MS = 1500;
+    private static final int EXIT_DELAY_MS = 300;
 
     private static String sText = "";
     private static boolean sForeground = false;   // startForeground() já deu certo
@@ -64,6 +65,22 @@ public class MonitorService extends Service
     public static void stop(Context context)
     {
         context.stopService(new Intent(context, MonitorService.class));
+    }
+
+    // O app terminou (main() do Qt vai retornar): fecha a tarefa e termina o
+    // processo logo depois. Deixado sozinho, o processo morre ~1 s depois com
+    // SIGABRT (threads de desenho do Android usando um mutex já destruído na
+    // saída), e reabrir num processo velho do Qt não funciona.
+    public static void finishAndExit(final Context context)
+    {
+        stop(context);
+        final Context app = context.getApplicationContext();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            for (ActivityManager.AppTask task : app.getSystemService(ActivityManager.class).getAppTasks()) {
+                task.finishAndRemoveTask();
+            }
+            Process.killProcess(Process.myPid());
+        }, EXIT_DELAY_MS);
     }
 
     // Android 13+: sem esta permissão o serviço roda, mas a notificação não
@@ -112,10 +129,8 @@ public class MonitorService extends Service
         return START_NOT_STICKY;
     }
 
-    // "Encerrar": o Qt fecha o app (e o banco local), mas a tela do Android
-    // fica aberta sem nada por trás e o Qt não reinicia no mesmo processo
-    // (abrir de novo travava). Então, um instante depois, a tarefa sai dos
-    // recentes e o processo termina; a próxima abertura começa do zero.
+    // "Encerrar": o Qt fecha o app (e o banco local); ao terminar, o C++ chama
+    // finishAndExit(). O temporizador daqui é a garantia se o Qt não terminar.
     private void quitApp()
     {
         nativeQuitRequested();

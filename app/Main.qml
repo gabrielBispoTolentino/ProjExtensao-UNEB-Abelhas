@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
 // Janela principal: faixa do topo, lista de colmeias, menu lateral e as
@@ -9,7 +9,7 @@ Window {
     width: 720
     height: 760
     visible: true
-    title: "Abelhas Petterson"
+    title: "BeeDuino"
     color: Theme.wing
 
     // Cores dos controles Basic (caixas de seleção, campos de texto, listas...).
@@ -99,7 +99,7 @@ Window {
             if (tool.page === pageName)
                 return tool.title
         }
-        return "Abelhas Petterson"
+        return "BeeDuino"
     }
 
     // Números em pt-BR (vírgula decimal), ex.: "24,5".
@@ -209,7 +209,7 @@ Window {
 
         Text {
             id: figure
-            text: window.number(parent.value, 1)
+            text: isNaN(parent.value) ? "–" : window.number(parent.value, 1)   // NaN: desconhecida
             color: parent.dimmed ? Theme.inkFaint : parent.tint
             font.pixelSize: Theme.reading
             font.letterSpacing: -1
@@ -460,9 +460,10 @@ Window {
                         padding: 0
                         topPadding: 16
                         bottomPadding: 18
-                        Accessible.name: modelData.name + ", " + window.number(modelData.tempDht, 1)
-                                         + " graus, umidade " + window.number(modelData.humidity, 0)
-                                         + " por cento. Abrir estatísticas"
+                        Accessible.name: modelData.name + ", " + window.number(modelData.tempDht, 1) + " graus, "
+                                         + (isNaN(modelData.humidity) ? "umidade desconhecida"
+                                            : "umidade " + window.number(modelData.humidity, 0) + " por cento")
+                                         + ". Abrir estatísticas"
                         onClicked: window.openDevice(modelData.deviceId, modelData.name)
 
                         background: Rectangle {
