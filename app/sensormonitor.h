@@ -8,8 +8,10 @@
 #include "blesensorclient.h"
 #endif
 
+#include <QJsonObject>
 #include <QObject>
 #include <QMap>
+#include <QSet>
 #include <QUrl>
 #include <QVariantList>
 
@@ -83,7 +85,9 @@ signals:
 private slots:
     void setStatus(const QString &status);
     void logMessage(const QString &message);
-    void handleBleMessage(const QString &topic, const QByteArray &payload);
+    void handleBleMessage(const QString &key, const QByteArray &payload);
+    void handleBleControl(const QString &key, const QJsonObject &message);
+    void handleBleDevicesChanged();
     void handleCloudReadings(const QList<SensorPayload> &readings);
     void handleRemoteDeleteFinished(CloudSync::DeleteResult result, qint64 deleted, int httpStatus);
 
@@ -102,6 +106,11 @@ private:
     // de cada cartão). Atualizada quando chega um registro, não a cada valor ao vivo.
     struct TemperatureRange { double min = 0.0; double max = 0.0; };
     QMap<QString, TemperatureRange> m_ranges;
+    // Despejo do SD pelo Bluetooth, por conexão: registros recebidos até
+    // agora, e conexões em que um registro do lote atual não foi guardado
+    // (esse lote não é confirmado e a placa o envia de novo).
+    QMap<QString, int> m_dumpReceived;
+    QSet<QString> m_dumpStoreFailed;
     SensorReadingStore m_store;
     CloudSync m_cloud;
     OutsideWeather m_weather;

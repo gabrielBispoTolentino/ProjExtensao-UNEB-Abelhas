@@ -15,11 +15,15 @@
 // linha JSON terminada em '\n', dividida em notificações de 20 bytes. Este
 // cliente procura placas que anunciam esse serviço (ou se chamam
 // "Colmeia-XXXX"), mantém uma conexão por placa, remonta as linhas e emite
-// cada uma com um pseudo-tópico "ble/<nome>" para o SensorMonitor.
+// cada uma com a chave da conexão para o SensorMonitor.
 //
 // Comandos (ex.: configurar Wi-Fi) são escritos na característica RX do NUS
 // como linhas JSON; as respostas da placa trazem um campo "type" e saem por
 // controlMessageReceived, em vez de serem tratadas como leituras.
+//
+// Ao conectar, o cliente acerta o relógio da placa ("time") e pede os
+// registros guardados no SD ("dump"); o SensorMonitor confirma cada lote
+// depois de guardá-lo (ver o despejo no firmware).
 class BleSensorClient : public QObject
 {
     Q_OBJECT
@@ -46,7 +50,7 @@ public:
 
 signals:
     void statusChanged(const QString &status);
-    void rawMessageReceived(const QString &topic, const QByteArray &payload);
+    void rawMessageReceived(const QString &key, const QByteArray &payload);
     void controlMessageReceived(const QString &key, const QJsonObject &message);
     void devicesChanged();
     void stateChanged();          // state() ou connectedCount() mudou

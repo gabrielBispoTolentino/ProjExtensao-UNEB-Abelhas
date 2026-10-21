@@ -335,11 +335,14 @@ void BleSensorClient::setupService(const QString &key)
         if (it != m_connections.end() && service->characteristic(nusRxUuid).isValid()) {
             it->ready = true;
             // Passa o relógio do celular para a placa, para ela datar as
-            // leituras mesmo sem internet (NTP).
+            // leituras mesmo sem internet (NTP). Depois pede o que ficou no
+            // SD: sem Wi-Fi, a placa manda os registros por aqui (com a
+            // hora já acertada, os registros deste boot saem datados).
             sendCommand(key, QJsonObject{
                 {QStringLiteral("cmd"), QStringLiteral("time")},
                 {QStringLiteral("ts"),  QDateTime::currentSecsSinceEpoch()},
             });
+            sendCommand(key, QJsonObject{{QStringLiteral("cmd"), QStringLiteral("dump")}});
             emit devicesChanged();
         }
         updateConnectedStatus();
@@ -397,7 +400,7 @@ void BleSensorClient::handleNotification(const QString &key, const QByteArray &c
             if (document.isObject() && document.object().contains(QLatin1String("type"))) {
                 emit controlMessageReceived(key, document.object());
             } else {
-                emit rawMessageReceived(QStringLiteral("ble/%1").arg(it->info.name()), line);
+                emit rawMessageReceived(key, line);
             }
             // O emit pode reentrar aqui; o iterador deixa de ser confiável.
             it = m_connections.find(key);

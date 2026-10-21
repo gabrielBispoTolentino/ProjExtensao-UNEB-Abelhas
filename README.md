@@ -34,7 +34,8 @@ Projeto de extensão da UNEB.
 - Exportar as leituras (por colmeia e por período) para uma planilha CSV,
   que abre direto no Excel, LibreOffice ou Google Planilhas.
 - Funciona sem internet: guarda as leituras no aparelho e envia para a nuvem
-  quando a conexão volta.
+  quando a conexão volta. Conectado por Bluetooth a uma placa sem Wi-Fi, o
+  celular também recebe os registros guardados no cartão SD dela.
 - Ferramentas da placa por Bluetooth: configurar o Wi-Fi (com lista das redes
   que a placa enxerga), renomear, mudar o intervalo de registro e reiniciar.
 - Limpar dados deste aparelho e/ou da nuvem, por colmeia e por período (apagar
@@ -47,7 +48,9 @@ Projeto de extensão da UNEB.
 - Lê o sensor a cada 2 s e envia o valor ao vivo por Bluetooth.
 - A cada intervalo de registro (1 a 60 min, padrão 1 min) grava a média como
   um registro e envia ao Supabase.
-- Sem internet, guarda os registros no cartão SD e envia depois.
+- Sem internet, guarda os registros no cartão SD e envia depois: pelo Wi-Fi
+  da placa ou, sem ele, pelo celular conectado por Bluetooth (o celular
+  guarda os registros e os envia à nuvem quando tiver internet).
 - Hora certa pela internet ou, sem internet, pelo celular conectado.
 - Abre o hotspot **Colmeia-Setup** para configurar o Wi-Fi quando não tem rede.
 

@@ -4,9 +4,11 @@
 // Bluetooth (BLE) para o app. A cada intervalo de registro (1 min por padrão,
 // 1 a 60, definido pelo app) a média das leituras vira um *registro*, enviado
 // ao Supabase por Wi-Fi; sem internet, o registro fica no cartão SD e sobe
-// depois. A placa também recebe comandos do app pelo BLE (configurar Wi-Fi,
-// nome, intervalo, reiniciar) e abre um hotspot de configuração quando não
-// tem rede.
+// depois, pelo Wi-Fi da placa ou, sem ele, pelo celular conectado por
+// Bluetooth (que guarda os registros e os envia quando tiver internet). A
+// placa também recebe comandos do app pelo BLE (configurar Wi-Fi, nome,
+// intervalo, reiniciar) e abre um hotspot de configuração quando não tem
+// rede.
 //
 // Para compilar (Arduino IDE, núcleo ESP32 3.3.x):
 //   * Partition Scheme: "Huge APP" (o programa tem ~1,4 MB);
@@ -42,6 +44,15 @@ struct SDReading {
   uint32_t      seq  = 0;  // 0 = desconhecido (formato antigo)
   float         t    = 0;
   float         h    = 0;
+};
+
+// Um lote lido do SD por readSDBatch(). Também no topo, pelo mesmo motivo.
+struct SDBatchInfo {
+  int      count    = 0;      // registros lidos
+  int      dropped  = 0;      // linhas que não dá mais para enviar, puladas
+  uint32_t endPos   = 0;      // posição no arquivo depois do lote
+  uint32_t fileSize = 0;
+  bool     toEnd    = false;  // o lote chegou ao fim do arquivo
 };
 
 // ── Pinos ──────────────────────────────────────────────────────────────────
@@ -90,6 +101,8 @@ struct SDReading {
 //   {"cmd":"name","name":".."}              -> {"type":"name","name":".."}   renomeia a placa
 //   {"cmd":"restart"}                       -> {"type":"restart"}            e reinicia em seguida
 //   {"cmd":"interval","minutes":N}          -> {"type":"interval","minutes":N} intervalo de registro
+//   {"cmd":"dump"}                          -> registros do SD em lotes (ver dumpSDStep())
+//   {"cmd":"dumpAck","pos":N}               -> (sem resposta) o app guardou o lote até N
 #define BLE_CMD_MAX_LEN   256  // maior linha de comando aceita
 #define BLE_CMD_QUEUE_LEN 4
 #define WIFI_SCAN_MAX     15   // redes enviadas na resposta do scan
@@ -120,6 +133,10 @@ struct SDReading {
 // Wi-Fi; depois de uma falha, espera SD_FLUSH_RETRY_MS para tentar de novo.
 #define SD_FLUSH_INTERVAL_MS  5000
 #define SD_FLUSH_RETRY_MS     60000
+// Sem Wi-Fi, o celular conectado leva o que ficou no SD, um lote por vez
+// (cada registro leva ~60 ms pelo BLE com o MTU padrão).
+#define DUMP_BATCH            10
+#define DUMP_ACK_TIMEOUT_MS   15000   // sem confirmação do app: o lote é enviado de novo
 
 // ── Identificação ──────────────────────────────────────────────────────────
 String deviceId;              // MAC sem ":" (ex.: A4CF12345678), montado no setup()
@@ -151,6 +168,13 @@ bool lastFlushFailed = false;
 unsigned long lastWifiAttempt = 0;
 unsigned long lastSensorRead = 0;
 volatile bool bleConnected = false;
+
+// Despejo do SD pelo Bluetooth (ver dumpSDStep())
+bool dumpWanted = false;        // o celular conectado pediu os registros guardados
+bool dumpAwaitingAck = false;   // lote enviado, esperando o app confirmar
+uint32_t dumpFromPos = 0;       // sdSentPos quando o lote foi lido
+SDBatchInfo dumpBatch;          // o lote à espera de confirmação
+unsigned long dumpSentAt = 0;
 unsigned long wifiDownSince = 0; // quando o Wi-Fi caiu (0 = está conectado)
 
 // Comandos BLE: o callback de escrita roda na tarefa do Bluetooth, então só
@@ -618,7 +642,7 @@ bool uploadRecords(const SDReading* records, int count) {
 // Sobe os registros guardados enquanto a placa estava offline, UM lote por
 // chamada, continuando de onde parou (sd_pos), para o loop() seguir
 // atendendo o Bluetooth entre um lote e outro. O arquivo só é zerado
-// quando o servidor confirmou tudo.
+// quando o servidor (ou o app, no despejo pelo Bluetooth) confirmou tudo.
 void saveSentPos(uint32_t pos) {
   sdSentPos = pos;
   prefs.begin("sys", false);
@@ -638,71 +662,86 @@ void resetSDLog() {
   pendingSDData = false;
 }
 
-// Retorna false se o envio falhou (o loop() espera SD_FLUSH_RETRY_MS para tentar de novo)
-bool flushSDStep() {
-  if (!sdReady || !pendingSDData) return true;
-
+// Lê o próximo lote ainda não enviado (a partir de sd_pos), até maxCount
+// registros. Linhas que não dá mais para enviar são puladas e contadas em
+// info->dropped. Para num registro deste boot ainda sem hora (ele espera o
+// relógio ser acertado). Retorna false se o arquivo não abriu.
+bool readSDBatch(SDReading* batch, int maxCount, SDBatchInfo* info) {
+  *info = SDBatchInfo();
   File f = SD.open(LOG_FILE, FILE_READ);
   if (!f) {
     Serial.println("[SD] Falha ao abrir log para sincronizar.");
     return false;
   }
+  info->fileSize = f.size();
   if (sdSentPos == 0 || sdSentPos > f.size()) {
     f.readStringUntil('\n'); // pula o cabeçalho
   } else {
     f.seek(sdSentPos);
   }
 
-  SDReading batch[UPLOAD_BATCH];
-  int batchSize = 0;
-  int droppedCount = 0;
-  uint32_t consumedPos = f.position(); // até onde este lote resolve o arquivo
+  info->endPos = f.position(); // até onde este lote resolve o arquivo
   bool waitForClock = false;
 
-  while (batchSize < UPLOAD_BATCH && f.available()) {
+  while (info->count < maxCount && f.available()) {
     String line = f.readStringUntil('\n');
     uint32_t afterLine = f.position();
     line.trim();
 
     SDReading r;
     if (line.length() == 0) {
-      consumedPos = afterLine;
+      info->endPos = afterLine;
       continue;
     }
     if (!parseSDLine(line, &r) || r.seq == 0 || (r.ts <= MIN_VALID_EPOCH && r.boot != bootCount)) {
       // Corrompida, formato antigo (sem seq) ou sem hora de um boot anterior:
       // o banco exige seq e hora, que não podem mais ser recuperados.
-      droppedCount++;
-      consumedPos = afterLine;
+      info->dropped++;
+      info->endPos = afterLine;
       continue;
     }
     if (r.ts <= MIN_VALID_EPOCH) {
       waitForClock = true; // deste boot, sem hora: espera o relógio ser acertado
       break;
     }
-    batch[batchSize++] = r;
-    consumedPos = afterLine;
+    batch[info->count++] = r;
+    info->endPos = afterLine;
   }
-  bool reachedEnd = !waitForClock && !f.available();
+  info->toEnd = !waitForClock && !f.available();
   f.close();
 
-  if (batchSize > 0 && !uploadRecords(batch, batchSize)) {
+  if (info->dropped > 0) {
+    Serial.printf("[SD] %d linha(s) antiga(s) sem identificação/hora descartada(s).\n", info->dropped);
+  }
+  return true;
+}
+
+// O lote foi entregue: avança sd_pos ou, no fim do arquivo, zera o log.
+void commitSDBatch(const SDBatchInfo& info) {
+  if (info.toEnd) {
+    resetSDLog();
+  } else if (info.endPos != sdSentPos) {
+    saveSentPos(info.endPos);
+  }
+}
+
+// Retorna false se o envio falhou (o loop() espera SD_FLUSH_RETRY_MS para tentar de novo)
+bool flushSDStep() {
+  if (!sdReady || !pendingSDData) return true;
+
+  SDReading batch[UPLOAD_BATCH];
+  SDBatchInfo info;
+  if (!readSDBatch(batch, UPLOAD_BATCH, &info)) return false;
+
+  if (info.count > 0 && !uploadRecords(batch, info.count)) {
     Serial.println("[SD] Envio dos registros guardados falhou — tenta de novo mais tarde.");
     return false;
   }
+  commitSDBatch(info);
 
-  if (reachedEnd) {
-    resetSDLog();
-  } else if (consumedPos != sdSentPos) {
-    saveSentPos(consumedPos);
-  }
-
-  if (batchSize > 0) {
+  if (info.count > 0) {
     Serial.printf("[SD] %d registro(s) guardado(s) enviado(s) ao Supabase%s.\n",
-                  batchSize, reachedEnd ? " — cartão em dia" : "");
-  }
-  if (droppedCount > 0) {
-    Serial.printf("[SD] %d linha(s) antiga(s) sem identificação/hora descartada(s).\n", droppedCount);
+                  info.count, info.toEnd ? " — cartão em dia" : "");
   }
   return true;
 }
@@ -822,6 +861,123 @@ void sendBLEError(const char* message) {
   doc["type"]    = "error";
   doc["message"] = message;
   sendBLEJson(doc);
+}
+
+// Um registro para o app, que o guarda no banco local e o envia ao Supabase
+// se a placa não conseguir. live: o registro que acabou de ser feito (fica
+// também como o valor lido pelo READ); senão, um registro antigo do SD.
+void sendRecordBLE(const SDReading& r, bool live) {
+  JsonDocument payload;
+  payload["deviceId"] = deviceId;
+  payload["name"]     = deviceName;
+  payload["tempDHT"]  = r.t;
+  payload["umidade"]  = r.h;
+  payload["boot"]     = r.boot;
+  payload["seq"]      = r.seq;
+  payload["rec"]      = true;   // marca de registro: o app só guarda/envia o que tem isso
+  if (r.ts) payload["ts"] = (long long)r.ts;
+
+  char buffer[250];
+  serializeJson(payload, buffer, sizeof(buffer));
+  if (live) {
+    sendBLE(buffer);
+  } else {
+    notifyBLELine(String(buffer));
+  }
+}
+
+// ── Despejo do SD pelo Bluetooth ───────────────────────────────────────────
+// Sem Wi-Fi (ou com o Supabase fora do alcance), o celular conectado leva os
+// registros guardados no SD. Ao conectar, o app pede {"cmd":"dump"}; a placa
+// manda um lote de registros (iguais aos ao vivo, com "rec": true) seguido
+// de {"type":"dump","pos":N,"count":K,"left":<bytes que faltam>}. O app
+// guarda o lote no banco dele e responde {"cmd":"dumpAck","pos":N}; só então
+// sd_pos avança e sai o próximo lote. Se a conexão cair antes, o mesmo lote
+// vai de novo na próxima (o app e o Supabase ignoram registros repetidos).
+// No fim: {"type":"dump","done":true}. Com o Wi-Fi funcionando, a própria
+// placa envia o SD e responde {"type":"dump","state":"wifi"}.
+bool cloudWorking() {
+  return WiFi.status() == WL_CONNECTED && !lastFlushFailed;
+}
+
+void sendDumpDone() {
+  JsonDocument doc;
+  doc["type"] = "dump";
+  doc["done"] = true;
+  sendBLEJson(doc);
+}
+
+void requestDump() {
+  dumpWanted = true;
+  if (cloudWorking()) {
+    JsonDocument doc;
+    doc["type"]  = "dump";
+    doc["state"] = "wifi";
+    sendBLEJson(doc);
+  }
+}
+
+// Chamado a cada volta do loop() enquanto o app quer os registros e a placa
+// não tem como enviá-los sozinha.
+void dumpSDStep() {
+  if (dumpAwaitingAck) return;
+  if (!sdReady || !pendingSDData) {
+    sendDumpDone();
+    dumpWanted = false;
+    return;
+  }
+
+  SDReading batch[DUMP_BATCH];
+  SDBatchInfo info;
+  if (!readSDBatch(batch, DUMP_BATCH, &info)) {
+    sendBLEError("Não foi possível ler o cartão SD.");
+    dumpWanted = false;
+    return;
+  }
+  if (info.count == 0) {
+    if (info.endPos != sdSentPos || info.toEnd) {
+      commitSDBatch(info);   // só linhas descartadas: nada a confirmar
+    }
+    if (info.toEnd || info.endPos == sdSentPos) {
+      // Fim do arquivo, ou só restam registros esperando o relógio
+      sendDumpDone();
+      dumpWanted = false;
+    }
+    return;
+  }
+
+  for (int i = 0; i < info.count; i++) {
+    sendRecordBLE(batch[i], false);
+  }
+  JsonDocument doc;
+  doc["type"]  = "dump";
+  doc["pos"]   = info.endPos;
+  doc["count"] = info.count;
+  doc["left"]  = info.fileSize - info.endPos;
+  sendBLEJson(doc);
+
+  dumpFromPos = sdSentPos;
+  dumpBatch = info;
+  dumpAwaitingAck = true;
+  dumpSentAt = millis();
+}
+
+void handleDumpAck(uint32_t pos) {
+  if (!dumpAwaitingAck || pos != dumpBatch.endPos) return; // confirmação velha ou repetida
+  dumpAwaitingAck = false;
+  if (sdSentPos != dumpFromPos) return; // o Wi-Fi enviou o SD nesse meio-tempo
+
+  // O lote ia até o fim, mas um registro novo pode ter sido gravado depois:
+  // aí só avança, para não apagar o registro novo junto.
+  SDBatchInfo info = dumpBatch;
+  if (info.toEnd) {
+    File f = SD.open(LOG_FILE, FILE_READ);
+    if (!f || f.size() != info.fileSize) info.toEnd = false;
+    if (f) f.close();
+  }
+  commitSDBatch(info);
+  Serial.printf("[BLE] %d registro(s) guardado(s) entregue(s) ao app%s.\n",
+                info.count, info.toEnd ? " — cartão em dia" : "");
 }
 
 // ── Configuração de Wi-Fi pelo app (comandos BLE) ──────────────────────────
@@ -1102,6 +1258,10 @@ void processBleCommands() {
       requestRestart();
     } else if (name == "interval") {
       setRecordInterval(cmd["minutes"] | 0);
+    } else if (name == "dump") {
+      requestDump();
+    } else if (name == "dumpAck") {
+      handleDumpAck(cmd["pos"] | (uint32_t)0);
     } else {
       sendBLEError("Comando desconhecido.");
     }
@@ -1160,7 +1320,8 @@ void setup() {
 
 // ── Registro do intervalo ──────────────────────────────────────────────────
 // Média das leituras, enviada ao app (BLE) e ao Supabase; sem internet
-// fica no SD até poder subir.
+// fica no SD até poder subir (mesmo que o app a tenha recebido: só o
+// despejo confirmado tira um registro do SD).
 void saveRecord(time_t ts, bool wifiOk) {
   if (recordCount == 0) return; // nenhuma leitura válida no último intervalo
 
@@ -1174,22 +1335,7 @@ void saveRecord(time_t ts, bool wifiOk) {
   recordSumT = recordSumH = 0;
   recordCount = 0;
 
-  // Para o app: ele guarda no banco local e envia ao Supabase se a placa não conseguir
-  {
-    JsonDocument payload;
-    payload["deviceId"] = deviceId;
-    payload["name"]     = deviceName;
-    payload["tempDHT"]  = r.t;
-    payload["umidade"]  = r.h;
-    payload["boot"]     = r.boot;
-    payload["seq"]      = r.seq;
-    payload["rec"]      = true;   // marca de registro: o app só guarda/envia o que tem isso
-    if (r.ts) payload["ts"] = (long long)r.ts;
-
-    char buffer[250];
-    serializeJson(payload, buffer, sizeof(buffer));
-    sendBLE(buffer);
-  }
+  sendRecordBLE(r, true);
 
   // Sem hora certa o banco não aceita: fica no SD até o relógio ser acertado.
   // (O que já estava no SD é enviado aos poucos pelo loop(), em flushSDStep().)
@@ -1215,6 +1361,19 @@ void loop() {
   // Comandos do app via Bluetooth
   processBleCommands();
   updateWifiProvisioning();
+
+  // Despejo do SD pelo Bluetooth: termina com a conexão; um lote sem
+  // confirmação é enviado de novo depois do tempo limite.
+  if (!bleConnected) {
+    dumpWanted = false;
+    dumpAwaitingAck = false;
+  } else if (dumpAwaitingAck && millis() - dumpSentAt >= DUMP_ACK_TIMEOUT_MS) {
+    Serial.println("[BLE] O app não confirmou o lote — enviando de novo.");
+    dumpAwaitingAck = false;
+  }
+  if (dumpWanted && !cloudWorking()) {
+    dumpSDStep();
+  }
 
   // Reinício pedido pelo app (espera a resposta BLE sair antes)
   if (restartAt != 0 && (long)(millis() - restartAt) >= 0) {
@@ -1278,9 +1437,10 @@ void loop() {
   }
 
   // Envia aos poucos o que ficou no SD (um lote por vez), assim que houver
-  // Wi-Fi, sem esperar o próximo registro
+  // Wi-Fi, sem esperar o próximo registro (nem mexer no arquivo enquanto um
+  // lote do despejo pelo Bluetooth espera confirmação)
   unsigned long flushWait = lastFlushFailed ? SD_FLUSH_RETRY_MS : SD_FLUSH_INTERVAL_MS;
-  if (wifiOk && pendingSDData && timeIsValid() && millis() - lastFlushAt >= flushWait) {
+  if (wifiOk && pendingSDData && !dumpAwaitingAck && timeIsValid() && millis() - lastFlushAt >= flushWait) {
     lastFlushAt = millis();
     lastFlushFailed = !flushSDStep();
   }
